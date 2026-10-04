@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import datetime
 
@@ -18,7 +19,11 @@ EDIT = ["cliente", "trade_name", "city", "qty", "pct", "sel", "oc", "prod", "pay
 # ---------- Google Sheet ----------
 @st.cache_resource
 def book():
-    gc = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
+    if "gcp_json" in st.secrets:  # metodo semplice: contenuto del file .json incollato così com'è
+        info = json.loads(st.secrets["gcp_json"])
+    else:
+        info = dict(st.secrets["gcp_service_account"])
+    gc = gspread.service_account_from_dict(info)
     return gc.open_by_key(st.secrets["sheet_id"])
 
 
