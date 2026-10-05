@@ -109,7 +109,7 @@ def season_key(code):
     c = str(code).upper().strip()
     m = re.search(r"(\d{2})\s*$", c)
     year = int(m.group(1)) if m else 0
-    half = 0 if c.startswith(("SS", "S", "PE", "RE")) else 1
+    half = 0 if c.startswith("PS") else 1 if c.startswith(("SS", "S", "PE", "RE")) else 2
     return (year, half)
 
 
@@ -146,7 +146,8 @@ if view == "Panoramica":
         recenti = st.toggle("Dalla stagione più recente", value=True)
         g = (orders.assign(da_saldare=orders["pay_status"] != "saldato")
              .groupby(["brand", "stagione"])
-             .agg(ordini=("id", "count"), qty=("qty", "sum"), da_saldare=("da_saldare", "sum"))
+             .agg(ordini=("id", "count"), qty=("qty", "sum"), importo=("pct", "sum"),
+                  da_saldare=("da_saldare", "sum"))
              .reset_index())
         g["_k"] = g["stagione"].map(season_key)
         g = (g.sort_values(["_k", "brand"], ascending=[not recenti, True])
@@ -156,7 +157,9 @@ if view == "Panoramica":
             g, hide_index=True, use_container_width=True,
             on_select="rerun", selection_mode="single-row", key="ov",
             column_config={"brand": "Brand", "stagione": "Stagione", "ordini": "Ordini",
-                           "qty": "Qtà totale", "da_saldare": "Pagamenti da saldare"})
+                           "qty": "Qtà totale",
+                           "importo": st.column_config.NumberColumn("Importo totale (€)", format="%.2f"),
+                           "da_saldare": "Pagamenti da saldare"})
         if sel.selection.rows:
             r = g.iloc[sel.selection.rows[0]]
             st.session_state["_open"] = (r["brand"], r["stagione"])
@@ -177,7 +180,8 @@ if view == "Ordini":
         st.caption("Modifica direttamente nella tabella, poi premi Salva. Puoi aggiungere righe in fondo.")
         cfg = {
             "cliente": st.column_config.SelectboxColumn("Cliente", options=clients, required=True),
-            "trade_name": "Trade name", "city": "Città", "qty": "Qtà", "pct": "%",
+            "trade_name": "Trade name", "city": "Città", "qty": "Qtà",
+            "pct": st.column_config.NumberColumn("Importo (€)", format="%.2f", min_value=0),
             "sel": "SEL", "oc": "OC", "prod": "PROD", "payment_terms": "Termini di pagamento",
             "producer_code": f"{season}", "rc_del": "RC DEL", "mje_del": "MJE DEL", "comments": "Commenti",
             "pay_status": st.column_config.SelectboxColumn("Pagamento", options=PAY),
