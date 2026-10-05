@@ -1,4 +1,5 @@
 import json
+import re
 import time
 import uuid
 from datetime import datetime
@@ -15,6 +16,7 @@ ANA = {"Brand": ["name"], "Stagioni": ["brand", "code"], "Clienti": ["name"]}
 LOGCOLS = ["quando", "chi", "id", "trade_name", "campo", "prima", "dopo"]
 EDIT = ["cliente", "trade_name", "city", "qty", "pct", "sel", "oc", "prod", "payment_terms", "producer_code",
         "rc_del", "mje_del", "comments", "pay_status", "pay_paid", "pay_due", "ship_status", "ship_date"]
+VIEWS = ["Panoramica", "Ordini", "Importa", "Anagrafiche", "PDF"]
 
 
 # ---------- Google Sheet ----------
@@ -102,26 +104,66 @@ def norm(x):
     return "" if x is None or (not isinstance(x, str) and pd.isna(x)) else str(x)
 
 
+def season_key(code):
+    """SS26 < FW26 < SS27 ...: ordina per anno, poi primavera/estate prima di autunno/inverno."""
+    c = str(code).upper().strip()
+    m = re.search(r"(\d{2})\s*$", c)
+    year = int(m.group(1)) if m else 0
+    half = 0 if c.startswith(("SS", "S", "PE", "RE")) else 1
+    return (year, half)
+
+
 # ---------- Dati ----------
 orders = load_orders()
 brands = read("Brand", tuple(ANA["Brand"]))["name"].tolist()
 seasons = read("Stagioni", tuple(ANA["Stagioni"]))
 clients = read("Clienti", tuple(ANA["Clienti"]))["name"].tolist()
 
+# Apertura di un ordine dalla Panoramica: va fatto prima di creare i widget
+if "_open" in st.session_state:
+    b_, s_ = st.session_state.pop("_open")
+    st.session_state["brand_sel"], st.session_state["season_sel"] = b_, s_
+    st.session_state["view"] = "Ordini"
+
 with st.sidebar:
     st.header("Topsheet")
     who = st.text_input("Il tuo nome", key="who", help="Viene registrato come autore di ogni modifica.")
-    brand = st.selectbox("Brand", brands) if brands else None
-    opts = seasons[seasons["brand"] == brand]["code"].tolist() if brand else []
-    season = st.selectbox("Stagione", opts) if opts else None
+    brand = st.selectbox("Brand", brands, key="brand_sel") if brands else None
+    opts = (sorted(seasons[seasons["brand"] == brand]["code"].tolist(), key=season_key, reverse=True)
+            if brand else [])
+    season = st.selectbox("Stagione", opts, key="season_sel") if opts else None
     if st.button("Ricarica dati"):
         st.cache_data.clear()
         st.rerun()
 
-t_ord, t_imp, t_ana, t_pdf = st.tabs(["Ordini", "Importa", "Anagrafiche", "PDF"])
+view = st.radio("Vista", VIEWS, horizontal=True, key="view", label_visibility="collapsed")
+
+# ---------- Panoramica ----------
+if view == "Panoramica":
+    if orders.empty:
+        st.info("Nessun topsheet caricato: usa la scheda Importa.")
+    else:
+        recenti = st.toggle("Dalla stagione più recente", value=True)
+        g = (orders.assign(da_saldare=orders["pay_status"] != "saldato")
+             .groupby(["brand", "stagione"])
+             .agg(ordini=("id", "count"), qty=("qty", "sum"), da_saldare=("da_saldare", "sum"))
+             .reset_index())
+        g["_k"] = g["stagione"].map(season_key)
+        g = (g.sort_values(["_k", "brand"], ascending=[not recenti, True])
+              .drop(columns="_k").reset_index(drop=True))
+        st.caption("Clicca su una riga per aprire l'ordine.")
+        sel = st.dataframe(
+            g, hide_index=True, use_container_width=True,
+            on_select="rerun", selection_mode="single-row", key="ov",
+            column_config={"brand": "Brand", "stagione": "Stagione", "ordini": "Ordini",
+                           "qty": "Qtà totale", "da_saldare": "Pagamenti da saldare"})
+        if sel.selection.rows:
+            r = g.iloc[sel.selection.rows[0]]
+            st.session_state["_open"] = (r["brand"], r["stagione"])
+            st.rerun()
 
 # ---------- Ordini ----------
-with t_ord:
+if view == "Ordini":
     if not (brand and season):
         st.info("Scegli brand e stagione nella barra laterale, oppure importa un topsheet nella scheda Importa.")
     else:
@@ -173,7 +215,7 @@ with t_ord:
                 st.rerun()
 
 # ---------- Importa ----------
-with t_imp:
+if view == "Importa":
     up = st.file_uploader("Carica un topsheet (.xlsx)", type=["xlsx"])
     if up:
         try:
@@ -210,7 +252,7 @@ with t_imp:
                     st.success(f"Importati {len(df)} ordini (i duplicati sono stati saltati).")
 
 # ---------- Anagrafiche ----------
-with t_ana:
+if view == "Anagrafiche":
     st.caption("Elenchi usati nei menu. Aggiungi righe in fondo e premi Salva.")
     for name, cols in ANA.items():
         st.subheader(name)
@@ -221,7 +263,7 @@ with t_ana:
             st.rerun()
 
 # ---------- PDF ----------
-with t_pdf:
+if view == "PDF":
     if brand and season:
         sub = orders[(orders["brand"] == brand) & (orders["stagione"] == season)]
         st.write(f"Topsheet **{brand} {season}**, {len(sub)} ordini, con i dati salvati finora.")
