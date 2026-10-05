@@ -1,4 +1,5 @@
 import json
+import time
 import uuid
 from datetime import datetime
 
@@ -27,37 +28,54 @@ def book():
     return gc.open_by_key(st.secrets["sheet_id"])
 
 
+@st.cache_resource
 def sheet(name, cols):
+    """Apre la scheda una sola volta (e la riusa), per non superare i limiti di Google."""
     try:
         return book().worksheet(name)
     except gspread.WorksheetNotFound:
         w = book().add_worksheet(name, 1000, len(cols))
-        w.update([cols], value_input_option="RAW")
+        w.update([list(cols)], value_input_option="RAW")
         return w
 
 
+def with_retry(fn):
+    for attempt in range(3):
+        try:
+            return fn()
+        except gspread.exceptions.APIError as e:
+            if attempt == 2 or "429" not in str(e):
+                raise
+            time.sleep(8 * (attempt + 1))  # limite di Google raggiunto: aspetta e riprova
+
+
+@st.cache_data(ttl=120, show_spinner=False)
 def read(name, cols):
-    rec = sheet(name, cols).get_all_records(numericise_ignore=["all"], default_blank="")
+    w = sheet(name, tuple(cols))
+    rec = with_retry(lambda: w.get_all_records(numericise_ignore=["all"], default_blank=""))
     df = pd.DataFrame(rec)
     for c in cols:
         if c not in df:
             df[c] = ""
-    return df[cols]
+    return df[list(cols)]
 
 
 def write(name, df, cols):
-    w = sheet(name, cols)
-    w.clear()
-    w.update([cols] + df[cols].fillna("").astype(str).values.tolist(), value_input_option="RAW")
+    w = sheet(name, tuple(cols))
+    values = [list(cols)] + df[list(cols)].fillna("").astype(str).values.tolist()
+    with_retry(w.clear)
+    with_retry(lambda: w.update(values, value_input_option="RAW"))
+    st.cache_data.clear()  # le prossime letture prendono i dati aggiornati
 
 
 def log(rows):
     if rows:
-        sheet("Log", LOGCOLS).append_rows(rows, value_input_option="RAW")
+        w = sheet("Log", tuple(LOGCOLS))
+        with_retry(lambda: w.append_rows(rows, value_input_option="RAW"))
 
 
 def load_orders():
-    df = read("Ordini", COLS)
+    df = read("Ordini", tuple(COLS))
     for c in ["sel", "oc", "prod"]:
         df[c] = df[c].astype(str).str.upper().isin(["TRUE", "Y", "1"])
     for c in ["qty", "pct", "pay_paid"]:
@@ -86,9 +104,9 @@ def norm(x):
 
 # ---------- Dati ----------
 orders = load_orders()
-brands = read("Brand", ANA["Brand"])["name"].tolist()
-seasons = read("Stagioni", ANA["Stagioni"])
-clients = read("Clienti", ANA["Clienti"])["name"].tolist()
+brands = read("Brand", tuple(ANA["Brand"]))["name"].tolist()
+seasons = read("Stagioni", tuple(ANA["Stagioni"]))
+clients = read("Clienti", tuple(ANA["Clienti"]))["name"].tolist()
 
 with st.sidebar:
     st.header("Topsheet")
@@ -97,6 +115,7 @@ with st.sidebar:
     opts = seasons[seasons["brand"] == brand]["code"].tolist() if brand else []
     season = st.selectbox("Stagione", opts) if opts else None
     if st.button("Ricarica dati"):
+        st.cache_data.clear()
         st.rerun()
 
 t_ord, t_imp, t_ana, t_pdf = st.tabs(["Ordini", "Importa", "Anagrafiche", "PDF"])
@@ -195,7 +214,7 @@ with t_ana:
     st.caption("Elenchi usati nei menu. Aggiungi righe in fondo e premi Salva.")
     for name, cols in ANA.items():
         st.subheader(name)
-        data = read(name, cols)
+        data = read(name, tuple(cols))
         out = st.data_editor(data, num_rows="dynamic", hide_index=True, key=f"ana-{name}")
         if st.button(f"Salva {name.lower()}", key=f"s-{name}"):
             write(name, out.dropna(how="all"), cols)
