@@ -21,6 +21,17 @@ def num(x):
     return str(int(x)) if float(x).is_integer() else str(x)
 
 
+def eur(x):
+    """Importo in stile italiano: €17.249,00 (vuoto se non è un numero)."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return ""
+    if pd.isna(v):
+        return ""
+    return "€" + f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 def parse_xlsx(f):
     """Legge un topsheet: titolo in A1 ('BRAND STAGIONE'), righe tra '... ACCOUNTS' e 'GRAND TOTALS'."""
     ws = load_workbook(f, data_only=True).active
@@ -69,12 +80,12 @@ def make_pdf(df, brand, season):
     ]
     yes = lambda x: P("Y") if x else E
     for r in df.itertuples():
-        rows.append([P(r.cliente), P(r.trade_name), P(r.city), P(num(r.qty)), P(num(r.pct)), yes(r.sel), E,
+        rows.append([P(r.cliente), P(r.trade_name), P(r.city), P(num(r.qty)), P(eur(r.pct)), yes(r.sel), E,
                      yes(r.oc), yes(r.prod), P(r.payment_terms), P(r.producer_code), P(r.rc_del), P(r.mje_del),
                      P(r.comments, l)])
     q = pd.to_numeric(df["qty"], errors="coerce").sum()
     p = pd.to_numeric(df["pct"], errors="coerce").sum()
-    rows.append([P("GRAND TOTALS EUR"), E, E, P(num(q)), P(num(p)), E, P("0")] + [E] * 7)
+    rows.append([P("GRAND TOTALS EUR"), E, E, P(num(q)), P(eur(p)), E, P("0")] + [E] * 7)
     t, last = len(rows) - 1, len(rows) - 1
     buf = io.BytesIO()
     tbl = Table(rows, colWidths=[w * k for w in W], repeatRows=5)
