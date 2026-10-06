@@ -23,6 +23,11 @@ EDIT = ["cliente", "trade_name", "city", "qty", "pct", "valuta", "sel", "oc", "p
 UPD = ["cliente", "qty", "pct", "valuta", "sel", "oc", "prod", "payment_terms", "producer_code", "rc_del", "mje_del",
        "comments"]
 VIEWS = ["Panoramica", "Ordini", "Importa", "Anagrafiche", "PDF", "Log"]
+# etichette con semaforo mostrate nei menu Pagamento / Spedizione (nel foglio restano i codici PAY / SHIP)
+PAY_LBL = {"da_pagare": "🔴 Da pagare", "acconto_pagato": "🟡 Acconto pagato", "saldato": "🟢 Saldato"}
+SHIP_LBL = {"da_spedire": "🔴 Da spedire", "spedito": "🟡 Spedito", "consegnato": "🟢 Consegnato"}
+PAY_REV = {v: k for k, v in PAY_LBL.items()}
+SHIP_REV = {v: k for k, v in SHIP_LBL.items()}
 
 
 # ---------- Google Sheet ----------
@@ -344,16 +349,17 @@ if view == "Ordini":
                     return "🟠 In scadenza"
             return "🟡 Da saldare"
 
-        SEM_SHIP = {"da_spedire": "🔴 Da spedire", "spedito": "🟡 Spedito", "consegnato": "🟢 Consegnato"}
         cur["sem_pay"] = [sem_pay(r) for _, r in cur.iterrows()]
-        cur["sem_ship"] = [SEM_SHIP.get(x, "") for x in cur["ship_status"]]
+        cur_codes = cur.copy()  # versione con i codici del foglio, per confrontare le modifiche al Salva
+        cur["pay_status"] = cur["pay_status"].map(PAY_LBL)
+        cur["ship_status"] = cur["ship_status"].map(SHIP_LBL)
 
         if len(cur) != len(full):
             st.caption(f"Mostro {len(cur)} ordini su {len(full)}.")
         st.caption("Modifica direttamente nella tabella, poi premi Salva. Puoi aggiungere righe in fondo. "
                    "Per segnare un cliente come saldato spunta la casella «Saldato». "
                    "Per eliminare un ordine spunta «Elimina» (la riga sparisce al Salva). "
-                   "I semafori 🟢🟡🟠🔴 si aggiornano dopo il Salva.")
+                   "I semafori 🟢🟡🟠🔴 della colonna «Scadenza» si aggiornano dopo il Salva.")
         cfg = {
             "cliente": st.column_config.SelectboxColumn("Cliente", options=clients, required=True),
             "trade_name": "Trade name", "city": "Città", "qty": "Qtà",
@@ -363,20 +369,18 @@ if view == "Ordini":
             "producer_code": f"{season}", "rc_del": "RC DEL", "mje_del": "MJE DEL", "comments": "Commenti",
             "saldato": st.column_config.CheckboxColumn("Saldato"),
             "elimina": st.column_config.CheckboxColumn("🗑️ Elimina"),
-            "pay_status": st.column_config.SelectboxColumn("Pagamento", options=PAY),
+            "pay_status": st.column_config.SelectboxColumn("Pagamento", options=list(PAY_LBL.values())),
             "pay_paid": "Importo pagato",
-            "sem_pay": st.column_config.TextColumn("Pag.", disabled=True),
-            "sem_ship": st.column_config.TextColumn("Sped.", disabled=True),
+            "sem_pay": st.column_config.TextColumn("Scadenza", disabled=True),
             "pay_due": st.column_config.DateColumn("Scadenza pag.", format="DD/MM/YYYY"),
-            "ship_status": st.column_config.SelectboxColumn("Spedizione", options=SHIP),
+            "ship_status": st.column_config.SelectboxColumn("Spedizione", options=list(SHIP_LBL.values())),
             "ship_date": st.column_config.DateColumn("Data spedizione", format="DD/MM/YYYY"),
             "updated_at": st.column_config.TextColumn("Ultima modifica", disabled=True),
             "updated_by": st.column_config.TextColumn("Modificato da", disabled=True),
         }
         col_order = EDIT[:EDIT.index("pay_status")] + ["saldato", "pay_status"] + EDIT[EDIT.index("pay_status") + 1:]
-        # i semafori stanno davanti a «Saldato» (pagamento) e a «Spedizione»
-        col_order = [x for c in col_order for x in (["sem_pay", c] if c == "saldato"
-                                                    else ["sem_ship", c] if c == "ship_status" else [c])]
+        # il semaforo di scadenza sta davanti a «Saldato»
+        col_order = [x for c in col_order for x in (["sem_pay", c] if c == "saldato" else [c])]
         edkey = f"ed-{brand}-{season}-{q}-{'.'.join(pf)}-{'.'.join(sf)}-{st.session_state.get('edv', 0)}"
         ed = st.data_editor(cur, column_config=cfg, column_order=["elimina"] + col_order + ["updated_at", "updated_by"],
                             num_rows="dynamic", hide_index=True, use_container_width=True, key=edkey)
@@ -394,6 +398,8 @@ if view == "Ordini":
                 ed["id"] = ed["id"].apply(lambda x: x if isinstance(x, str) and x else uuid.uuid4().hex[:8])
                 # righe con «Elimina» spuntato: tolte dalla tabella, quindi finiscono tra le righe eliminate
                 ed = ed[~ed["elimina"].fillna(False).astype(bool)]
+                ed["pay_status"] = ed["pay_status"].map(PAY_REV)    # dalle etichette con semaforo ai codici
+                ed["ship_status"] = ed["ship_status"].map(SHIP_REV)
                 # la casella «Saldato» e il menu «Pagamento» devono restare coerenti
                 was = dict(zip(cur["id"], cur["saldato"]))
 
@@ -409,7 +415,7 @@ if view == "Ordini":
                 ed["pay_status"] = ed["pay_status"].where(ed["pay_status"].isin(PAY), PAY[0])
                 ed["ship_status"] = ed["ship_status"].where(ed["ship_status"].isin(SHIP), SHIP[0])
 
-                old, new = cur.set_index("id"), ed.set_index("id")
+                old, new = cur_codes.set_index("id"), ed.set_index("id")
                 added = [i for i in new.index if i not in old.index]
                 changed = {}
                 for i in new.index:
