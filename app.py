@@ -230,12 +230,20 @@ if view == "Panoramica":
         o["da_saldare"] = ~saldato
         o["scaduti"] = ~saldato & o["pay_due"].notna() & (o["pay_due"] < datetime.now().date())
         o["da_spedire"] = o["ship_status"] == "da_spedire"
-        g = (o.groupby(["brand", "stagione", "valuta"])
-             .agg(ordini=("id", "count"), qty=("qty", "sum"), importo=("importo", "sum"),
-                  incassato=("incassato", "sum"), da_incassare=("da_incassare", "sum"),
+        # una riga per brand e stagione; gli importi sono scritti per valuta ("€776,00 + $48.244,40")
+        g = (o.groupby(["brand", "stagione"])
+             .agg(ordini=("id", "count"), qty=("qty", "sum"),
                   da_saldare=("da_saldare", "sum"), scaduti=("scaduti", "sum"),
                   da_spedire=("da_spedire", "sum"))
              .reset_index())
+        for col in ("importo", "incassato", "da_incassare"):
+            parts = {}
+            tot = o.groupby(["brand", "stagione", "valuta"])[col].sum()
+            for (b_, s_, c_), v_ in sorted(tot.items(), key=lambda kv: kv[0][2] != "€"):
+                parts.setdefault((b_, s_), []).append(eur(v_, c_))
+            g[col] = [" + ".join(parts.get((b_, s_), [])) for b_, s_ in zip(g["brand"], g["stagione"])]
+        g = g[["brand", "stagione", "ordini", "qty", "importo", "incassato", "da_incassare",
+               "da_saldare", "scaduti", "da_spedire"]]
         n_scad = int(g["scaduti"].sum())
         if n_scad:  # nessun totale generale (mescolerebbe stagioni e valute): solo un avviso se ci sono scadenze
             st.warning(f"⚠️ {n_scad} pagamenti scaduti: guarda la colonna «Pagamenti scaduti» qui sotto.")
@@ -244,15 +252,14 @@ if view == "Panoramica":
         g = (g.sort_values(["_k", "brand"], ascending=[not recenti, True])
               .drop(columns="_k").reset_index(drop=True))
         st.caption("Clicca su una riga per aprire l'ordine.")
-        money_cfg = lambda label: st.column_config.NumberColumn(label, format="%.2f")
         sel = st.dataframe(
             g, hide_index=True, use_container_width=True,
             on_select="rerun", selection_mode="single-row", key="ov",
-            column_config={"brand": "Brand", "stagione": "Stagione", "valuta": "Valuta", "ordini": "Ordini",
+            column_config={"brand": "Brand", "stagione": "Stagione", "ordini": "Ordini",
                            "qty": "Qtà totale",
-                           "importo": money_cfg("Importo totale"),
-                           "incassato": money_cfg("Incassato"),
-                           "da_incassare": money_cfg("Da incassare"),
+                           "importo": "Importo totale",
+                           "incassato": "Incassato",
+                           "da_incassare": "Da incassare",
                            "da_saldare": "Pagamenti da saldare",
                            "scaduti": "Pagamenti scaduti",
                            "da_spedire": "Spedizioni da fare"})
@@ -267,7 +274,7 @@ if view == "Panoramica":
             pick = st.selectbox("Topsheet da eliminare", combos, key=f"pan_del_pick_{pv}",
                                 format_func=lambda t: f"{t[0]} {t[1]}")
             n_ord = int(((orders["brand"] == pick[0]) & (orders["stagione"] == pick[1])).sum())
-            st.warning(f"Verranno eliminati {n_ord} ordini di {pick[0]} {pick[1]}. "
+            st.warning(f"Verranno eliminati {n_ord} ordini di {pick[0]} {pick[1]} (in tutte le valute). "
                        "Prima dell'eliminazione ne resta una copia nel foglio «Backup_Ordini» del Google Sheet.")
             ok = st.checkbox("Confermo: voglio eliminare questi ordini", key=f"pan_del_ok_{pv}")
             if st.button("Elimina topsheet", type="primary", disabled=not ok, key=f"pan_del_btn_{pv}"):
