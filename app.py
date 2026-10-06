@@ -219,6 +219,8 @@ with link_col:
 
 # ---------- Panoramica ----------
 if view == "Panoramica":
+    if "flash_pan" in st.session_state:
+        st.success(st.session_state.pop("flash_pan"))
     if orders.empty:
         st.info("Nessun topsheet caricato: usa la scheda Importa.")
     else:
@@ -261,6 +263,32 @@ if view == "Panoramica":
             st.session_state["_open"] = (r["brand"], r["stagione"])
             st.rerun()
 
+        with st.expander("🗑️ Elimina un intero topsheet (tutti gli ordini di un brand e stagione)"):
+            pv = st.session_state.get("pdv", 0)  # cambia dopo ogni eliminazione: azzera menu e conferma
+            combos = list(g[["brand", "stagione"]].drop_duplicates().itertuples(index=False, name=None))
+            pick = st.selectbox("Topsheet da eliminare", combos, key=f"pan_del_pick_{pv}",
+                                format_func=lambda t: f"{t[0]} {t[1]}")
+            n_ord = int(((orders["brand"] == pick[0]) & (orders["stagione"] == pick[1])).sum())
+            st.warning(f"Verranno eliminati {n_ord} ordini di {pick[0]} {pick[1]}. "
+                       "Prima dell'eliminazione ne resta una copia nel foglio «Backup_Ordini» del Google Sheet.")
+            ok = st.checkbox("Confermo: voglio eliminare questi ordini", key=f"pan_del_ok_{pv}")
+            if st.button("Elimina topsheet", type="primary", disabled=not ok, key=f"pan_del_btn_{pv}"):
+                if not who.strip():
+                    st.error("Scrivi il tuo nome nella barra laterale prima di eliminare.")
+                else:
+                    fresh = load_orders(fresh=True)
+                    gone = fresh[(fresh["brand"] == pick[0]) & (fresh["stagione"] == pick[1])]
+                    if gone.empty:
+                        st.info("Questo topsheet non ha più ordini: premi «Ricarica dati».")
+                    else:
+                        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+                        rows = [[now, who, r.id, r.trade_name, "(riga eliminata)", "", ""] for r in gone.itertuples()]
+                        save_orders(fresh.drop(gone.index)[COLS])
+                        log(rows)
+                        st.session_state["pdv"] = pv + 1
+                        st.session_state["flash_pan"] = f"Eliminati {len(gone)} ordini di {pick[0]} {pick[1]}."
+                        st.rerun()
+
 # ---------- Ordini ----------
 if view == "Ordini":
     if "flash" in st.session_state:
@@ -295,11 +323,13 @@ if view == "Ordini":
             cur = cur[cur["ship_status"].isin(sf)]
         cur = cur.reset_index(drop=True)
         cur["saldato"] = cur["pay_status"] == "saldato"
+        cur["elimina"] = False
 
         if len(cur) != len(full):
             st.caption(f"Mostro {len(cur)} ordini su {len(full)}.")
         st.caption("Modifica direttamente nella tabella, poi premi Salva. Puoi aggiungere righe in fondo. "
-                   "Per segnare un cliente come saldato spunta la casella «Saldato».")
+                   "Per segnare un cliente come saldato spunta la casella «Saldato». "
+                   "Per eliminare un ordine spunta «Elimina» (la riga sparisce al Salva).")
         cfg = {
             "cliente": st.column_config.SelectboxColumn("Cliente", options=clients, required=True),
             "trade_name": "Trade name", "city": "Città", "qty": "Qtà",
@@ -308,6 +338,7 @@ if view == "Ordini":
             "sel": "SEL", "oc": "OC", "prod": "PROD", "payment_terms": "Termini di pagamento",
             "producer_code": f"{season}", "rc_del": "RC DEL", "mje_del": "MJE DEL", "comments": "Commenti",
             "saldato": st.column_config.CheckboxColumn("Saldato"),
+            "elimina": st.column_config.CheckboxColumn("🗑️ Elimina"),
             "pay_status": st.column_config.SelectboxColumn("Pagamento", options=PAY),
             "pay_paid": "Importo pagato",
             "pay_due": st.column_config.DateColumn("Scadenza pag."),
@@ -318,8 +349,11 @@ if view == "Ordini":
         }
         col_order = EDIT[:EDIT.index("pay_status")] + ["saldato", "pay_status"] + EDIT[EDIT.index("pay_status") + 1:]
         edkey = f"ed-{brand}-{season}-{q}-{'.'.join(pf)}-{'.'.join(sf)}-{st.session_state.get('edv', 0)}"
-        ed = st.data_editor(cur, column_config=cfg, column_order=col_order + ["updated_at", "updated_by"],
+        ed = st.data_editor(cur, column_config=cfg, column_order=["elimina"] + col_order + ["updated_at", "updated_by"],
                             num_rows="dynamic", hide_index=True, use_container_width=True, key=edkey)
+        n_del = int(ed["elimina"].fillna(False).astype(bool).sum())
+        if n_del:
+            st.warning(f"{n_del} ordini con «Elimina» spuntato verranno eliminati quando premi Salva.")
         if st.button("Salva modifiche", type="primary"):
             if not who.strip():
                 st.error("Scrivi il tuo nome nella barra laterale prima di salvare.")
@@ -329,6 +363,8 @@ if view == "Ordini":
                 ed["brand"], ed["stagione"] = brand, season
                 ed["valuta"] = ed["valuta"].where(ed["valuta"].isin(CURRENCIES), "€")  # righe nuove: euro
                 ed["id"] = ed["id"].apply(lambda x: x if isinstance(x, str) and x else uuid.uuid4().hex[:8])
+                # righe con «Elimina» spuntato: tolte dalla tabella, quindi finiscono tra le righe eliminate
+                ed = ed[~ed["elimina"].fillna(False).astype(bool)]
                 # la casella «Saldato» e il menu «Pagamento» devono restare coerenti
                 was = dict(zip(cur["id"], cur["saldato"]))
 
@@ -340,7 +376,7 @@ if view == "Ordini":
                         return "acconto_pagato" if pd.notna(r["pay_paid"]) and r["pay_paid"] > 0 else "da_pagare"
                     return r["pay_status"]
 
-                ed["pay_status"] = ed.apply(pay_of, axis=1)
+                ed["pay_status"] = [pay_of(r) for _, r in ed.iterrows()]  # (funziona anche se non resta nessuna riga)
                 ed["pay_status"] = ed["pay_status"].where(ed["pay_status"].isin(PAY), PAY[0])
                 ed["ship_status"] = ed["ship_status"].where(ed["ship_status"].isin(SHIP), SHIP[0])
 
