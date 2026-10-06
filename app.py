@@ -174,11 +174,16 @@ def money(df):
     return imp, inc, (imp - inc).clip(lower=0)
 
 
-def by_cur(frame, col):
-    """Somma di una colonna, separata per valuta: '€1.000,00 + $2.000,00' (mai somme miste € e $)."""
-    tot = frame.groupby("valuta")[col].sum()
-    parts = [eur(v, c) for c, v in sorted(tot.items(), key=lambda kv: kv[0] != "€")]
-    return " + ".join(parts) or eur(0)
+def money_metric(col, label, frame, colname):
+    """Come st.metric, ma con una sola valuta mostra il valore normale; con più valute le impila una sopra l'altra
+    (mai somme miste € e $)."""
+    tot = frame.groupby("valuta")[colname].sum()
+    items = sorted(tot.items(), key=lambda kv: kv[0] != "€")
+    if len(items) <= 1:
+        col.metric(label, eur(items[0][1], items[0][0]) if items else eur(0))
+    else:
+        lines = "".join(f'<div style="font-size:1.6rem;line-height:1.35">{eur(v, c)}</div>' for c, v in items)
+        col.markdown(f'<div style="font-size:14px;opacity:.7">{label}</div>{lines}', unsafe_allow_html=True)
 
 
 # ---------- Dati ----------
@@ -230,9 +235,9 @@ if view == "Panoramica":
                   da_spedire=("da_spedire", "sum"))
              .reset_index())
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Importo totale", by_cur(g, "importo"))
-        m2.metric("Incassato", by_cur(g, "incassato"))
-        m3.metric("Da incassare", by_cur(g, "da_incassare"))
+        money_metric(m1, "Importo totale", g, "importo")
+        money_metric(m2, "Incassato", g, "incassato")
+        money_metric(m3, "Da incassare", g, "da_incassare")
         m4.metric("Pagamenti scaduti", int(g["scaduti"].sum()))
         recenti = st.toggle("Dalla stagione più recente", value=True)
         g["_k"] = g["stagione"].map(season_key)
@@ -272,7 +277,7 @@ if view == "Ordini":
         c1.metric("Ordini", len(full))
         c2.metric("Pagamenti da saldare", int((full["pay_status"] != "saldato").sum()))
         c3.metric("Pagamenti scaduti", len(late))
-        c4.metric("Da incassare", by_cur(full.assign(_r=resid), "_r"))
+        money_metric(c4, "Da incassare", full.assign(_r=resid), "_r")
 
         # filtri: mostrano solo una parte delle righe, le altre restano intatte al salvataggio
         f1, f2, f3 = st.columns([2, 1, 1])
