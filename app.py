@@ -8,7 +8,7 @@ import gspread
 import pandas as pd
 import streamlit as st
 
-from core import COLS, PAY, SHIP, eur, make_pdf, num
+from core import COLS, CURRENCIES, PAY, SHIP, cur_sym, eur, make_pdf, num
 from topsheet_parser import parse_xlsx
 
 st.set_page_config(page_title="Topsheet", layout="wide")
@@ -17,10 +17,10 @@ WSP_URL = "https://wsppriceselectiontool.streamlit.app/"
 
 ANA = {"Brand": ["name"], "Stagioni": ["brand", "code"], "Clienti": ["name"]}
 LOGCOLS = ["quando", "chi", "id", "trade_name", "campo", "prima", "dopo"]
-EDIT = ["cliente", "trade_name", "city", "qty", "pct", "sel", "oc", "prod", "payment_terms", "producer_code",
+EDIT = ["cliente", "trade_name", "city", "qty", "pct", "valuta", "sel", "oc", "prod", "payment_terms", "producer_code",
         "rc_del", "mje_del", "comments", "pay_status", "pay_paid", "pay_due", "ship_status", "ship_date"]
 # campi che un reimport può aggiornare (stato pagamento e spedizione non vengono mai toccati)
-UPD = ["cliente", "qty", "pct", "sel", "oc", "prod", "payment_terms", "producer_code", "rc_del", "mje_del",
+UPD = ["cliente", "qty", "pct", "valuta", "sel", "oc", "prod", "payment_terms", "producer_code", "rc_del", "mje_del",
        "comments"]
 VIEWS = ["Panoramica", "Ordini", "Importa", "Anagrafiche", "PDF", "Log"]
 
@@ -76,7 +76,7 @@ def read(name, cols):
 def write(name, df, cols):
     w = sheet(name, tuple(cols))
     values = [list(cols)] + df[list(cols)].fillna("").astype(str).values.tolist()
-    with_retry(lambda: w.resize(rows=len(values) + 100))  # la scheda cresce (o si riduce) secondo i dati
+    with_retry(lambda: w.resize(rows=len(values) + 100, cols=len(cols)))  # la scheda cresce (o si riduce) secondo i dati
     with_retry(w.clear)
     with_retry(lambda: w.update(values, value_input_option="RAW"))
     st.cache_data.clear()  # le prossime letture prendono i dati aggiornati
@@ -126,6 +126,7 @@ def load_orders(fresh=False):
         df[c] = pd.to_numeric(df[c], errors="coerce")
     for c in ["pay_due", "ship_date"]:
         df[c] = pd.to_datetime(df[c], errors="coerce").apply(lambda x: x.date() if pd.notna(x) else None)
+    df["valuta"] = df["valuta"].map(cur_sym)
     df["pay_status"] = df["pay_status"].where(df["pay_status"].isin(PAY), PAY[0])
     df["ship_status"] = df["ship_status"].where(df["ship_status"].isin(SHIP), SHIP[0])
     return df
@@ -173,6 +174,13 @@ def money(df):
     return imp, inc, (imp - inc).clip(lower=0)
 
 
+def by_cur(frame, col):
+    """Somma di una colonna, separata per valuta: '€1.000,00 + $2.000,00' (mai somme miste € e $)."""
+    tot = frame.groupby("valuta")[col].sum()
+    parts = [eur(v, c) for c, v in sorted(tot.items(), key=lambda kv: kv[0] != "€")]
+    return " + ".join(parts) or eur(0)
+
+
 # ---------- Dati ----------
 orders = load_orders()
 brands = read("Brand", tuple(ANA["Brand"]))["name"].tolist()
@@ -215,16 +223,16 @@ if view == "Panoramica":
         o["da_saldare"] = ~saldato
         o["scaduti"] = ~saldato & o["pay_due"].notna() & (o["pay_due"] < datetime.now().date())
         o["da_spedire"] = o["ship_status"] == "da_spedire"
-        g = (o.groupby(["brand", "stagione"])
+        g = (o.groupby(["brand", "stagione", "valuta"])
              .agg(ordini=("id", "count"), qty=("qty", "sum"), importo=("importo", "sum"),
                   incassato=("incassato", "sum"), da_incassare=("da_incassare", "sum"),
                   da_saldare=("da_saldare", "sum"), scaduti=("scaduti", "sum"),
                   da_spedire=("da_spedire", "sum"))
              .reset_index())
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Importo totale", eur(g["importo"].sum()))
-        m2.metric("Incassato", eur(g["incassato"].sum()))
-        m3.metric("Da incassare", eur(g["da_incassare"].sum()))
+        m1.metric("Importo totale", by_cur(g, "importo"))
+        m2.metric("Incassato", by_cur(g, "incassato"))
+        m3.metric("Da incassare", by_cur(g, "da_incassare"))
         m4.metric("Pagamenti scaduti", int(g["scaduti"].sum()))
         recenti = st.toggle("Dalla stagione più recente", value=True)
         g["_k"] = g["stagione"].map(season_key)
@@ -235,11 +243,11 @@ if view == "Panoramica":
         sel = st.dataframe(
             g, hide_index=True, use_container_width=True,
             on_select="rerun", selection_mode="single-row", key="ov",
-            column_config={"brand": "Brand", "stagione": "Stagione", "ordini": "Ordini",
+            column_config={"brand": "Brand", "stagione": "Stagione", "valuta": "Valuta", "ordini": "Ordini",
                            "qty": "Qtà totale",
-                           "importo": money_cfg("Importo totale (€)"),
-                           "incassato": money_cfg("Incassato (€)"),
-                           "da_incassare": money_cfg("Da incassare (€)"),
+                           "importo": money_cfg("Importo totale"),
+                           "incassato": money_cfg("Incassato"),
+                           "da_incassare": money_cfg("Da incassare"),
                            "da_saldare": "Pagamenti da saldare",
                            "scaduti": "Pagamenti scaduti",
                            "da_spedire": "Spedizioni da fare"})
@@ -264,7 +272,7 @@ if view == "Ordini":
         c1.metric("Ordini", len(full))
         c2.metric("Pagamenti da saldare", int((full["pay_status"] != "saldato").sum()))
         c3.metric("Pagamenti scaduti", len(late))
-        c4.metric("Da incassare", eur(resid.sum()))
+        c4.metric("Da incassare", by_cur(full.assign(_r=resid), "_r"))
 
         # filtri: mostrano solo una parte delle righe, le altre restano intatte al salvataggio
         f1, f2, f3 = st.columns([2, 1, 1])
@@ -290,7 +298,8 @@ if view == "Ordini":
         cfg = {
             "cliente": st.column_config.SelectboxColumn("Cliente", options=clients, required=True),
             "trade_name": "Trade name", "city": "Città", "qty": "Qtà",
-            "pct": st.column_config.NumberColumn("Importo (€)", format="%.2f", min_value=0),
+            "pct": st.column_config.NumberColumn("Importo", format="%.2f", min_value=0),
+            "valuta": st.column_config.SelectboxColumn("Valuta", options=CURRENCIES, required=True),
             "sel": "SEL", "oc": "OC", "prod": "PROD", "payment_terms": "Termini di pagamento",
             "producer_code": f"{season}", "rc_del": "RC DEL", "mje_del": "MJE DEL", "comments": "Commenti",
             "saldato": st.column_config.CheckboxColumn("Saldato"),
@@ -313,6 +322,7 @@ if view == "Ordini":
                 now, rows = datetime.now().strftime("%Y-%m-%d %H:%M"), []
                 ed = ed.copy()
                 ed["brand"], ed["stagione"] = brand, season
+                ed["valuta"] = ed["valuta"].where(ed["valuta"].isin(CURRENCIES), "€")  # righe nuove: euro
                 ed["id"] = ed["id"].apply(lambda x: x if isinstance(x, str) and x else uuid.uuid4().hex[:8])
                 # la casella «Saldato» e il menu «Pagamento» devono restare coerenti
                 was = dict(zip(cur["id"], cur["saldato"]))

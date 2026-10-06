@@ -8,11 +8,18 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle
 
-COLS = ["id", "brand", "stagione", "cliente", "trade_name", "city", "qty", "pct", "sel", "oc", "prod",
+COLS = ["id", "brand", "stagione", "cliente", "trade_name", "city", "qty", "pct", "valuta", "sel", "oc", "prod",
         "payment_terms", "producer_code", "rc_del", "mje_del", "comments",
         "pay_status", "pay_paid", "pay_due", "ship_status", "ship_date", "updated_at", "updated_by"]
 PAY = ["da_pagare", "acconto_pagato", "saldato"]
 SHIP = ["da_spedire", "spedito", "consegnato"]
+CURRENCIES = ["€", "$"]
+CUR_CODE = {"€": "EUR", "$": "USD"}
+
+
+def cur_sym(v):
+    """Valuta di una riga: '$' (o 'USD') = dollari; qualsiasi altra cosa, anche vuoto, = euro."""
+    return "$" if str(v).strip().upper() in ("$", "USD") else "€"
 
 
 def num(x):
@@ -21,15 +28,15 @@ def num(x):
     return str(int(x)) if float(x).is_integer() else str(x)
 
 
-def eur(x):
-    """Importo in stile italiano: €17.249,00 (vuoto se non è un numero)."""
+def eur(x, cur="€"):
+    """Importo in stile italiano: €17.249,00 oppure $17.249,00 (vuoto se non è un numero)."""
     try:
         v = float(x)
     except (TypeError, ValueError):
         return ""
     if pd.isna(v):
         return ""
-    return "€" + f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return cur_sym(cur) + f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def parse_xlsx(f):
@@ -63,7 +70,7 @@ W = [18.9, 18, 7.4, 3.5, 11.4, 3.4, 5.75, 3.1, 5.25, 14.4, 4.5, 14.6, 17, 23.9] 
 
 
 def make_pdf(df, brand, season):
-    """PDF A4 orizzontale con la stessa struttura del topsheet Excel."""
+    """PDF A4 orizzontale con la stessa struttura del topsheet Excel (un totale per ogni valuta)."""
     page, m = landscape(A4), 18
     k = (page[0] - 2 * m) / sum(W)
     b = ParagraphStyle("b", fontName="Helvetica-Bold", fontSize=6.5, leading=7.5, alignment=1)
@@ -71,33 +78,44 @@ def make_pdf(df, brand, season):
     big = ParagraphStyle("t", parent=b, fontSize=11, leading=13)
     P = lambda t, s=b: Paragraph(escape(str(t)), s)
     E = ""
+    has_cur = "valuta" in df.columns
+    cur_of = (lambda x: cur_sym(x)) if has_cur else (lambda x: "€")
+    cur_list = sorted({cur_of(v) for v in df["valuta"]} if has_cur else {"€"}, key=lambda c: c != "€") or ["€"]
+    accounts = f"{CUR_CODE[cur_list[0]]} ACCOUNTS" if len(cur_list) == 1 else "ACCOUNTS"
     rows = [
         [P(f"{brand} {season}", big)] + [E] * 9 + [P("COMMENTS", big)] + [E] * 3,
         [E] * 3 + [P(season), E, P("SEL"), E, P("OC"), P("PROD"), P("PAYMENT TERMS")] + [E] * 4,
         [E] * 14,
         [P("SHOP NAME"), P("TRADE NAME"), P("CITY")] + [E] * 11,
-        [P("EUR ACCOUNTS")] + [E] * 9 + [P(season), P("RC DEL"), P("MJE DEL"), P("COMMENTS")],
+        [P(accounts)] + [E] * 9 + [P(season), P("RC DEL"), P("MJE DEL"), P("COMMENTS")],
     ]
     yes = lambda x: P("Y") if x else E
     for r in df.itertuples():
-        rows.append([P(r.cliente), P(r.trade_name), P(r.city), P(num(r.qty)), P(eur(r.pct)), yes(r.sel), E,
+        rows.append([P(r.cliente), P(r.trade_name), P(r.city), P(num(r.qty)),
+                     P(eur(r.pct, getattr(r, "valuta", "€"))), yes(r.sel), E,
                      yes(r.oc), yes(r.prod), P(r.payment_terms), P(r.producer_code), P(r.rc_del), P(r.mje_del),
                      P(r.comments, l)])
-    q = pd.to_numeric(df["qty"], errors="coerce").sum()
-    p = pd.to_numeric(df["pct"], errors="coerce").sum()
-    rows.append([P("GRAND TOTALS EUR"), E, E, P(num(q)), P(eur(p)), E, P("0")] + [E] * 7)
-    t, last = len(rows) - 1, len(rows) - 1
+    first_tot = len(rows)
+    for n, c in enumerate(cur_list):
+        sub = df[df["valuta"].map(cur_sym) == c] if has_cur else df
+        q = pd.to_numeric(sub["qty"], errors="coerce").sum()
+        p = pd.to_numeric(sub["pct"], errors="coerce").sum()
+        rows.append([P(f"GRAND TOTALS {CUR_CODE[c]}"), E, E, P(num(q)), P(eur(p, c)), E,
+                     P("0") if n == 0 else E] + [E] * 7)
+    last = len(rows) - 1
     buf = io.BytesIO()
     tbl = Table(rows, colWidths=[w * k for w in W], repeatRows=5)
-    tbl.setStyle(TableStyle([
+    style = [
         ("SPAN", (0, 0), (2, 2)), ("SPAN", (3, 0), (4, 0)), ("SPAN", (3, 1), (4, 1)), ("SPAN", (5, 1), (6, 1)),
-        ("SPAN", (10, 0), (13, 2)), ("SPAN", (0, 4), (9, 4)), ("SPAN", (0, last), (2, last)),
+        ("SPAN", (10, 0), (13, 2)), ("SPAN", (0, 4), (9, 4)),
         ("BACKGROUND", (0, 0), (13, 2), GREEN), ("BACKGROUND", (0, 3), (2, 3), YEL),
-        ("BACKGROUND", (0, 4), (13, 4), PEACH), ("BACKGROUND", (0, last), (13, last), PEACH),
+        ("BACKGROUND", (0, 4), (13, 4), PEACH), ("BACKGROUND", (0, first_tot), (13, last), PEACH),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.black), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
         ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-    ]))
+    ]
+    style += [("SPAN", (0, t), (2, t)) for t in range(first_tot, last + 1)]
+    tbl.setStyle(TableStyle(style))
     SimpleDocTemplate(buf, pagesize=page, leftMargin=m, rightMargin=m, topMargin=m, bottomMargin=m,
                       title=f"{brand} {season} topsheet").build([tbl])
     return buf.getvalue()

@@ -14,7 +14,7 @@ import re
 import openpyxl
 import pandas as pd
 
-OUT_COLS = ["cliente", "trade_name", "city", "qty", "pct", "sel", "oc", "prod",
+OUT_COLS = ["cliente", "trade_name", "city", "qty", "pct", "valuta", "sel", "oc", "prod",
             "payment_terms", "producer_code", "rc_del", "mje_del", "comments",
             "pay_status", "ship_status"]
 SEASON_RE = re.compile(r"\b([A-Z]{2}\d{2})\b")
@@ -49,6 +49,16 @@ def _num(v):
         return float(s)
     except ValueError:
         return None
+
+
+def _currency(fmt):
+    """'€' o '$' dal formato numerico della cella dell'importo (None se non riconoscibile)."""
+    f = str(fmt or "").upper()
+    if "€" in f or "EUR" in f:
+        return "€"
+    if "$" in f or "USD" in f:
+        return "$"
+    return None
 
 
 def _flag(v):
@@ -141,9 +151,18 @@ def parse_xlsx(file):
         return ws.cell(r, c).value if c else None
 
     rows = []
-    for r in range(first, ws.max_row + 1):
+    ctx = "€"
+    for r in range(head_row + 1, ws.max_row + 1):
         trade = _txt(cell(r, trade_col))
-        if not trade or is_total(trade):
+        if not trade:
+            # riga di sezione (es. "USD ACCOUNTS"): vale come valuta di default per le righe seguenti
+            head_txt = " ".join(_label(ws.cell(r, c).value) for c in (1, 2))
+            if not head_txt.startswith(SKIP_PREFIX):
+                if "USD" in head_txt or "$" in head_txt:
+                    ctx = "$"
+                elif "EUR" in head_txt or "€" in head_txt:
+                    ctx = "€"
+        if r < first or not trade or is_total(trade):
             continue
         qty, val = _num(cell(r, qty_col)), _num(cell(r, val_col))
         if qty is None and val is None:
@@ -156,6 +175,7 @@ def parse_xlsx(file):
             "city": _txt(cell(r, city_col)),
             "qty": qty,
             "pct": val,
+            "valuta": _currency(ws.cell(r, val_col).number_format) or ctx,
             "sel": _flag(cell(r, sel_col)),
             "oc": _flag(cell(r, oc_col)),
             "prod": _flag(cell(r, prod_col)),
