@@ -8,7 +8,8 @@ import gspread
 import pandas as pd
 import streamlit as st
 
-from core import COLS, PAY, SHIP, eur, make_pdf, num, parse_xlsx
+from core import COLS, PAY, SHIP, eur, make_pdf, num
+from topsheet_parser import parse_xlsx
 
 st.set_page_config(page_title="Topsheet", layout="wide")
 
