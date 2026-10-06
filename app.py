@@ -12,6 +12,8 @@ from core import COLS, PAY, SHIP, eur, make_pdf, num, parse_xlsx
 
 st.set_page_config(page_title="Topsheet", layout="wide")
 
+WSP_URL = "https://wsppriceselectiontool.streamlit.app/"
+
 ANA = {"Brand": ["name"], "Stagioni": ["brand", "code"], "Clienti": ["name"]}
 LOGCOLS = ["quando", "chi", "id", "trade_name", "campo", "prima", "dopo"]
 EDIT = ["cliente", "trade_name", "city", "qty", "pct", "sel", "oc", "prod", "payment_terms", "producer_code",
@@ -194,7 +196,12 @@ with st.sidebar:
         st.session_state["edv"] = st.session_state.get("edv", 0) + 1  # scarta le modifiche non salvate
         st.rerun()
 
-view = st.radio("Vista", VIEWS, horizontal=True, key="view", label_visibility="collapsed")
+# Barra superiore: selettore di vista a sinistra, link per tornare a WSP a destra
+view_col, link_col = st.columns([4, 1])
+with view_col:
+    view = st.radio("Vista", VIEWS, horizontal=True, key="view", label_visibility="collapsed")
+with link_col:
+    st.link_button("Apri WSP ↗", WSP_URL, use_container_width=True)
 
 # ---------- Panoramica ----------
 if view == "Panoramica":
