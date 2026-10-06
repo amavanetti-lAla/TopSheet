@@ -236,11 +236,9 @@ if view == "Panoramica":
                   da_saldare=("da_saldare", "sum"), scaduti=("scaduti", "sum"),
                   da_spedire=("da_spedire", "sum"))
              .reset_index())
-        m1, m2, m3, m4 = st.columns(4)
-        money_metric(m1, "Importo totale", g, "importo")
-        money_metric(m2, "Incassato", g, "incassato")
-        money_metric(m3, "Da incassare", g, "da_incassare")
-        m4.metric("Pagamenti scaduti", int(g["scaduti"].sum()))
+        n_scad = int(g["scaduti"].sum())
+        if n_scad:  # nessun totale generale (mescolerebbe stagioni e valute): solo un avviso se ci sono scadenze
+            st.warning(f"⚠️ {n_scad} pagamenti scaduti: guarda la colonna «Pagamenti scaduti» qui sotto.")
         recenti = st.toggle("Dalla stagione più recente", value=True)
         g["_k"] = g["stagione"].map(season_key)
         g = (g.sort_values(["_k", "brand"], ascending=[not recenti, True])
@@ -325,11 +323,30 @@ if view == "Ordini":
         cur["saldato"] = cur["pay_status"] == "saldato"
         cur["elimina"] = False
 
+        # semafori (colonne di sola lettura, si aggiornano dopo il Salva)
+        today = datetime.now().date()
+
+        def sem_pay(r):
+            if r["pay_status"] == "saldato":
+                return "🟢 Saldato"
+            d = r["pay_due"]
+            if d is not None and pd.notna(d):
+                if d < today:
+                    return "🔴 Scaduto"
+                if (d - today).days <= 7:
+                    return "🟠 In scadenza"
+            return "🟡 Da saldare"
+
+        SEM_SHIP = {"da_spedire": "🔴 Da spedire", "spedito": "🟡 Spedito", "consegnato": "🟢 Consegnato"}
+        cur["sem_pay"] = [sem_pay(r) for _, r in cur.iterrows()]
+        cur["sem_ship"] = [SEM_SHIP.get(x, "") for x in cur["ship_status"]]
+
         if len(cur) != len(full):
             st.caption(f"Mostro {len(cur)} ordini su {len(full)}.")
         st.caption("Modifica direttamente nella tabella, poi premi Salva. Puoi aggiungere righe in fondo. "
                    "Per segnare un cliente come saldato spunta la casella «Saldato». "
-                   "Per eliminare un ordine spunta «Elimina» (la riga sparisce al Salva).")
+                   "Per eliminare un ordine spunta «Elimina» (la riga sparisce al Salva). "
+                   "I semafori 🟢🟡🟠🔴 si aggiornano dopo il Salva.")
         cfg = {
             "cliente": st.column_config.SelectboxColumn("Cliente", options=clients, required=True),
             "trade_name": "Trade name", "city": "Città", "qty": "Qtà",
@@ -341,13 +358,18 @@ if view == "Ordini":
             "elimina": st.column_config.CheckboxColumn("🗑️ Elimina"),
             "pay_status": st.column_config.SelectboxColumn("Pagamento", options=PAY),
             "pay_paid": "Importo pagato",
-            "pay_due": st.column_config.DateColumn("Scadenza pag."),
+            "sem_pay": st.column_config.TextColumn("Pag.", disabled=True),
+            "sem_ship": st.column_config.TextColumn("Sped.", disabled=True),
+            "pay_due": st.column_config.DateColumn("Scadenza pag.", format="DD/MM/YYYY"),
             "ship_status": st.column_config.SelectboxColumn("Spedizione", options=SHIP),
-            "ship_date": st.column_config.DateColumn("Data spedizione"),
+            "ship_date": st.column_config.DateColumn("Data spedizione", format="DD/MM/YYYY"),
             "updated_at": st.column_config.TextColumn("Ultima modifica", disabled=True),
             "updated_by": st.column_config.TextColumn("Modificato da", disabled=True),
         }
         col_order = EDIT[:EDIT.index("pay_status")] + ["saldato", "pay_status"] + EDIT[EDIT.index("pay_status") + 1:]
+        # i semafori stanno davanti a «Saldato» (pagamento) e a «Spedizione»
+        col_order = [x for c in col_order for x in (["sem_pay", c] if c == "saldato"
+                                                    else ["sem_ship", c] if c == "ship_status" else [c])]
         edkey = f"ed-{brand}-{season}-{q}-{'.'.join(pf)}-{'.'.join(sf)}-{st.session_state.get('edv', 0)}"
         ed = st.data_editor(cur, column_config=cfg, column_order=["elimina"] + col_order + ["updated_at", "updated_by"],
                             num_rows="dynamic", hide_index=True, use_container_width=True, key=edkey)
