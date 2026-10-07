@@ -195,7 +195,14 @@ def money_metric(col, label, frame, colname):
 orders = load_orders()
 brands = read("Brand", tuple(ANA["Brand"]))["name"].tolist()
 seasons = read("Stagioni", tuple(ANA["Stagioni"]))
-clients = read("Clienti", tuple(ANA["Clienti"]))["name"].tolist()
+
+
+def sort_names(names):
+    """Elenco senza vuoti né doppioni, in ordine alfabetico (maiuscole/minuscole ininfluenti)."""
+    return sorted({str(n).strip() for n in names if str(n).strip()}, key=str.casefold)
+
+
+clients = sort_names(read("Clienti", tuple(ANA["Clienti"]))["name"].tolist())
 
 # Apertura di un ordine dalla Panoramica: va fatto prima di creare i widget
 if "_open" in st.session_state:
@@ -531,7 +538,7 @@ if view == "Importa":
                         write("Stagioni", pd.concat([seasons, pd.DataFrame([{"brand": b, "code": s}])]), ANA["Stagioni"])
                     new_c = [c for c in df["cliente"].unique() if c not in clients] if len(df) else []
                     if new_c:
-                        write("Clienti", pd.DataFrame({"name": clients + new_c}), ANA["Clienti"])
+                        write("Clienti", pd.DataFrame({"name": sort_names(clients + new_c)}), ANA["Clienti"])
                     st.success(f"Importati {len(df)} ordini nuovi, aggiornati {n_upd} già presenti"
                                f"{'' if upd else ' (i duplicati sono stati saltati)'}.")
 
@@ -541,9 +548,14 @@ if view == "Anagrafiche":
     for name, cols in ANA.items():
         st.subheader(name)
         data = read(name, tuple(cols))
+        if name == "Clienti":  # sempre in ordine alfabetico
+            data = pd.DataFrame({"name": sort_names(data["name"])})
         out = st.data_editor(data, num_rows="dynamic", hide_index=True, key=f"ana-{name}")
         if st.button(f"Salva {name.lower()}", key=f"s-{name}"):
-            write(name, out.dropna(how="all"), cols)
+            out = out.dropna(how="all")
+            if name == "Clienti":
+                out = pd.DataFrame({"name": sort_names(out["name"].fillna(""))})
+            write(name, out, cols)
             st.rerun()
 
 # ---------- PDF ----------
