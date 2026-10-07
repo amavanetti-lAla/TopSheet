@@ -360,21 +360,30 @@ if view == "Ordini":
                    "Per segnare un cliente come saldato spunta la casella «Saldato». "
                    "Per eliminare un ordine spunta «Elimina» (la riga sparisce al Salva). "
                    "I semafori 🟢🟡🟠🔴 della colonna «Scadenza» si aggiornano dopo il Salva.")
+        # larghezze ridotte e intestazioni brevi, così la tabella sta in una schermata
         cfg = {
+            "elimina": st.column_config.CheckboxColumn("🗑️", width="small", help="Spunta per eliminare l'ordine al Salva"),
             "cliente": st.column_config.SelectboxColumn("Cliente", options=clients, required=True),
-            "trade_name": "Trade name", "city": "Città", "qty": "Qtà",
-            "pct": st.column_config.NumberColumn("Importo", format="%.2f", min_value=0),
-            "valuta": st.column_config.SelectboxColumn("Valuta", options=CURRENCIES, required=True),
-            "sel": "SEL", "oc": "OC", "prod": "PROD", "payment_terms": "Termini di pagamento",
-            "producer_code": f"{season}", "rc_del": "RC DEL", "mje_del": "MJE DEL", "comments": "Commenti",
-            "saldato": st.column_config.CheckboxColumn("Saldato"),
-            "elimina": st.column_config.CheckboxColumn("🗑️ Elimina"),
-            "pay_status": st.column_config.SelectboxColumn("Pagamento", options=list(PAY_LBL.values())),
-            "pay_paid": "Importo pagato",
+            "trade_name": st.column_config.TextColumn("Trade name"),
+            "city": st.column_config.TextColumn("Città"),
+            "qty": st.column_config.NumberColumn("Qtà", width="small"),
+            "pct": st.column_config.NumberColumn("Importo", format="%.2f", min_value=0, width="small"),
+            "valuta": st.column_config.SelectboxColumn("Val.", options=CURRENCIES, required=True, width="small"),
+            "sel": st.column_config.CheckboxColumn("SEL", width="small"),
+            "oc": st.column_config.CheckboxColumn("OC", width="small"),
+            "prod": st.column_config.CheckboxColumn("PROD", width="small"),
+            "payment_terms": st.column_config.TextColumn("Termini"),
+            "producer_code": st.column_config.TextColumn(f"{season}", width="small"),
+            "rc_del": st.column_config.TextColumn("RC DEL", width="small"),
+            "mje_del": st.column_config.TextColumn("MJE DEL", width="small"),
+            "comments": st.column_config.TextColumn("Commenti"),
             "sem_pay": st.column_config.TextColumn("Scadenza", disabled=True),
-            "pay_due": st.column_config.DateColumn("Scadenza pag.", format="DD/MM/YYYY"),
+            "saldato": st.column_config.CheckboxColumn("Saldato", width="small"),
+            "pay_status": st.column_config.SelectboxColumn("Pagamento", options=list(PAY_LBL.values())),
+            "pay_paid": st.column_config.NumberColumn("Pagato", width="small"),
+            "pay_due": st.column_config.DateColumn("Scad. pag.", format="DD/MM/YYYY"),
             "ship_status": st.column_config.SelectboxColumn("Spedizione", options=list(SHIP_LBL.values())),
-            "ship_date": st.column_config.DateColumn("Data spedizione", format="DD/MM/YYYY"),
+            "ship_date": st.column_config.DateColumn("Data sped.", format="DD/MM/YYYY"),
             "updated_at": st.column_config.TextColumn("Ultima modifica", disabled=True),
             "updated_by": st.column_config.TextColumn("Modificato da", disabled=True),
         }
@@ -382,8 +391,12 @@ if view == "Ordini":
         # il semaforo di scadenza sta davanti a «Saldato»
         col_order = [x for c in col_order for x in (["sem_pay", c] if c == "saldato" else [c])]
         edkey = f"ed-{brand}-{season}-{q}-{'.'.join(pf)}-{'.'.join(sf)}-{st.session_state.get('edv', 0)}"
-        ed = st.data_editor(cur, column_config=cfg, column_order=["elimina"] + col_order + ["updated_at", "updated_by"],
-                            num_rows="dynamic", hide_index=True, use_container_width=True, key=edkey)
+        show_audit = st.toggle("Mostra anche «Ultima modifica» e «Modificato da»", key="show_audit")
+        cols_shown = ["elimina"] + col_order + (["updated_at", "updated_by"] if show_audit else [])
+        # altezza = tutte le righe visibili senza scorrere (fino a un massimo)
+        ed = st.data_editor(cur, column_config=cfg, column_order=cols_shown,
+                            num_rows="dynamic", hide_index=True, use_container_width=True, key=edkey,
+                            height=min(35 * (len(cur) + 2) + 3, 1000))
         n_del = int(ed["elimina"].fillna(False).astype(bool).sum())
         if n_del:
             st.warning(f"{n_del} ordini con «Elimina» spuntato verranno eliminati quando premi Salva.")
