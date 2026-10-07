@@ -367,10 +367,11 @@ if view == "Ordini":
                    "Per segnare un cliente come saldato spunta la casella «Saldato». "
                    "Per eliminare un ordine spunta «Elimina» (la riga sparisce al Salva). "
                    "I semafori 🟢🟡🟠🔴 della colonna «Scadenza» si aggiornano dopo il Salva.")
+        cli_opts = sorted(set(clients) | {str(c) for c in full["cliente"] if str(c).strip()}, key=str.casefold)
         # larghezze ridotte e intestazioni brevi, così la tabella sta in una schermata
         cfg = {
             "elimina": st.column_config.CheckboxColumn("🗑️", width="small", help="Spunta per eliminare l'ordine al Salva"),
-            "cliente": st.column_config.SelectboxColumn("Cliente", options=clients, required=True),
+            "cliente": st.column_config.SelectboxColumn("Cliente", options=cli_opts, required=True),
             "trade_name": st.column_config.TextColumn("Trade name"),
             "city": st.column_config.TextColumn("Città"),
             "qty": st.column_config.NumberColumn("Qtà", width="small"),
@@ -492,6 +493,9 @@ if view == "Importa":
             s = st.text_input("Stagione", s)
             key = lambda d: (d["brand"] + "|" + d["stagione"] + "|" + d["trade_name"].str.lower() + "|" + d["city"].str.lower())
             df = df.assign(brand=b, stagione=s)
+            canon = {" ".join(c.split()).casefold(): c for c in clients}  # stesso cliente scritto in modo diverso
+            df["cliente"] = df["cliente"].map(
+                lambda c: canon.get(" ".join(str(c).split()).casefold(), " ".join(str(c).split())))
             n_dup = int(key(df).isin(set(key(orders))).sum()) if len(orders) else 0
             st.dataframe(df.drop(columns=["brand", "stagione"]), hide_index=True, use_container_width=True)
             upd = st.checkbox("Aggiorna i dati degli ordini già presenti "
@@ -544,6 +548,8 @@ if view == "Importa":
 
 # ---------- Anagrafiche ----------
 if view == "Anagrafiche":
+    if "flash_ana" in st.session_state:
+        st.success(st.session_state.pop("flash_ana"))
     st.caption("Elenchi usati nei menu. Aggiungi righe in fondo e premi Salva.")
     for name, cols in ANA.items():
         st.subheader(name)
@@ -557,6 +563,44 @@ if view == "Anagrafiche":
                 out = pd.DataFrame({"name": sort_names(out["name"].fillna(""))})
             write(name, out, cols)
             st.rerun()
+
+        if name == "Clienti":
+            st.markdown("##### Clienti scritti in modo diverso")
+            st.caption("Cerca lo stesso cliente scritto con maiuscole o spazi diversi (es. «FLEUR DE PARIS» e "
+                       "«FLEUR de PARIS»). Scegli il nome da tenere: gli ordini verranno aggiornati e il doppione "
+                       "sparisce dall'elenco.")
+            raw_names = ([str(n) for n in read("Clienti", tuple(cols))["name"] if str(n).strip()]
+                         + [str(c) for c in orders["cliente"] if str(c).strip()])
+            groups = {}
+            for n_ in raw_names:
+                groups.setdefault(" ".join(n_.split()).casefold(), set()).add(n_)
+            dups = {k_: v_ for k_, v_ in groups.items() if len(v_) > 1}
+            n_by = orders["cliente"].map(lambda x: " ".join(str(x).split())).value_counts()
+            if not dups:
+                st.success("Nessun doppione trovato.")
+            for k_, variants in sorted(dups.items()):
+                shown = sorted({" ".join(x.split()) for x in variants}, key=lambda x: (x.casefold(), x))
+                keep = st.radio("Nome da tenere", shown, key=f"dup_keep_{k_}", horizontal=True,
+                                format_func=lambda sp: f"{sp}  ({int(n_by.get(sp, 0))} ordini)")
+                if st.button(f"Unisci in «{keep}»", key=f"dup_btn_{k_}"):
+                    if not who.strip():
+                        st.error("Scrivi il tuo nome nella barra laterale prima di unire.")
+                    else:
+                        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+                        fresh = load_orders(fresh=True)
+                        hit = fresh["cliente"].isin(list(variants)) & (fresh["cliente"] != keep)
+                        n_upd = int(hit.sum())
+                        if n_upd:
+                            rows_log = [[now, who, r.id, r.trade_name, "cliente", r.cliente, keep]
+                                        for r in fresh[hit].itertuples()]
+                            fresh.loc[hit, "cliente"] = keep
+                            fresh.loc[hit, ["updated_at", "updated_by"]] = [now, who]
+                            save_orders(fresh[COLS])
+                            log(rows_log)
+                        reg = [n_ for n_ in read("Clienti", tuple(cols))["name"] if str(n_) not in variants] + [keep]
+                        write("Clienti", pd.DataFrame({"name": sort_names(reg)}), ANA["Clienti"])
+                        st.session_state["flash_ana"] = f"Uniti in «{keep}»: aggiornati {n_upd} ordini."
+                        st.rerun()
 
 # ---------- PDF ----------
 if view == "PDF":
