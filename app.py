@@ -22,7 +22,7 @@ EDIT = ["cliente", "trade_name", "city", "qty", "pct", "valuta", "sel", "oc", "p
 # campi che un reimport può aggiornare (stato pagamento e spedizione non vengono mai toccati)
 UPD = ["cliente", "qty", "pct", "valuta", "sel", "oc", "prod", "payment_terms", "producer_code", "rc_del", "mje_del",
        "comments"]
-VIEWS = ["Panoramica", "Ordini", "Importa", "Anagrafiche", "PDF", "Log"]
+VIEWS = ["Panoramica", "Ordini", "Anagrafiche", "Importa", "PDF", "Log"]
 # etichette con semaforo mostrate nei menu Pagamento / Spedizione (nel foglio restano i codici PAY / SHIP)
 PAY_LBL = {"da_pagare": "🔴 Da pagare", "acconto_pagato": "🟡 Acconto pagato", "saldato": "🟢 Saldato"}
 SHIP_LBL = {"da_spedire": "🔴 Da spedire", "spedito": "🟡 Spedito", "consegnato": "🟢 Consegnato"}
@@ -195,6 +195,14 @@ def money_metric(col, label, frame, colname):
 orders = load_orders()
 brands = read("Brand", tuple(ANA["Brand"]))["name"].tolist()
 seasons = read("Stagioni", tuple(ANA["Stagioni"]))
+
+
+def pinned_col(factory, *args, **kw):
+    """Colonna fissata a sinistra mentre si scorre; con versioni di Streamlit più vecchie è una colonna normale."""
+    try:
+        return factory(*args, pinned=True, **kw)
+    except TypeError:
+        return factory(*args, **kw)
 
 
 def sort_names(names):
@@ -371,19 +379,19 @@ if view == "Ordini":
         # larghezze ridotte e intestazioni brevi, così la tabella sta in una schermata
         cfg = {
             "elimina": st.column_config.CheckboxColumn("🗑️", width="small", help="Spunta per eliminare l'ordine al Salva"),
-            "cliente": st.column_config.SelectboxColumn("Cliente", options=cli_opts, required=True),
-            "trade_name": st.column_config.TextColumn("Trade name"),
+            "cliente": pinned_col(st.column_config.SelectboxColumn, "Cliente", options=cli_opts, required=True),
+            "trade_name": pinned_col(st.column_config.TextColumn, "Trade name"),
             "city": st.column_config.TextColumn("Città"),
             "qty": st.column_config.NumberColumn("Qtà", width="small"),
-            "pct": st.column_config.NumberColumn("Importo", format="%.2f", min_value=0, width="small"),
+            "pct": st.column_config.NumberColumn("Importo", format="%.2f", min_value=0),
             "valuta": st.column_config.SelectboxColumn("Val.", options=CURRENCIES, required=True, width="small"),
             "sel": st.column_config.CheckboxColumn("SEL", width="small"),
             "oc": st.column_config.CheckboxColumn("OC", width="small"),
             "prod": st.column_config.CheckboxColumn("PROD", width="small"),
             "payment_terms": st.column_config.TextColumn("Termini"),
             "producer_code": st.column_config.TextColumn(f"{season}", width="small"),
-            "rc_del": st.column_config.TextColumn("RC DEL", width="small"),
-            "mje_del": st.column_config.TextColumn("MJE DEL", width="small"),
+            "rc_del": st.column_config.TextColumn("RC DEL"),
+            "mje_del": st.column_config.TextColumn("MJE DEL"),
             "comments": st.column_config.TextColumn("Commenti"),
             "sem_pay": st.column_config.TextColumn("Scadenza", disabled=True),
             "saldato": st.column_config.CheckboxColumn("Saldato", width="small"),
@@ -400,7 +408,7 @@ if view == "Ordini":
         col_order = [x for c in col_order for x in (["sem_pay", c] if c == "saldato" else [c])]
         edkey = f"ed-{brand}-{season}-{q}-{'.'.join(pf)}-{'.'.join(sf)}-{st.session_state.get('edv', 0)}"
         show_audit = st.toggle("Mostra anche «Ultima modifica» e «Modificato da»", key="show_audit")
-        cols_shown = ["elimina"] + col_order + (["updated_at", "updated_by"] if show_audit else [])
+        cols_shown = col_order + (["updated_at", "updated_by"] if show_audit else []) + ["elimina"]
         # altezza = tutte le righe visibili senza scorrere (fino a un massimo)
         ed = st.data_editor(cur, column_config=cfg, column_order=cols_shown,
                             num_rows="dynamic", hide_index=True, use_container_width=True, key=edkey,
