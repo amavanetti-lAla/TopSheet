@@ -222,6 +222,11 @@ def sort_names(names):
 
 clients = sort_names(read("Clienti", tuple(ANA["Clienti"]))["name"].tolist())
 
+# Dopo un rinomina in Anagrafiche: la selezione nella barra laterale segue il nuovo nome (prima dei widget)
+if "_ren_sel" in st.session_state:
+    for k_, v_ in st.session_state.pop("_ren_sel").items():
+        st.session_state[k_] = v_
+
 # Apertura di un ordine dalla Panoramica: va fatto prima di creare i widget
 if "_open" in st.session_state:
     b_, s_ = st.session_state.pop("_open")
@@ -659,12 +664,49 @@ def scheda_cliente(c_sel, who):
 
 
 # ---------- Anagrafiche ----------
+def bump():
+    """Cambia la chiave delle tabelle di Consulta: azzera la riga selezionata dopo una modifica."""
+    st.session_state["consv"] = st.session_state.get("consv", 0) + 1
+
+
+def ren_orders(mask_fn, col, new):
+    """Cambia un campo (brand, stagione o cliente) in tutti gli ordini che corrispondono e lo scrive nel Log."""
+    fresh = load_orders(fresh=True)
+    hit = mask_fn(fresh)
+    n = int(hit.sum())
+    if n:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        rows = [[now, who, r.id, r.trade_name, col, norm(getattr(r, col)), new] for r in fresh[hit].itertuples()]
+        fresh.loc[hit, col] = new
+        fresh.loc[hit, ["updated_at", "updated_by"]] = [now, who]
+        save_orders(fresh[COLS])
+        log(rows)
+    return n
+
+
+def azioni(label, n_ord, key, rename_fn, delete_fn):
+    """Riquadro «Rinomina / Elimina» per la riga selezionata."""
+    with st.expander(f"⚙️ Rinomina o elimina «{label}»"):
+        new = st.text_input("Nuovo nome", label, key=f"ren_in_{key}").strip()
+        if st.button("Rinomina", key=f"ren_{key}"):
+            if not who.strip():
+                st.error("Scrivi il tuo nome nella barra laterale prima di modificare.")
+            elif not new or new == label:
+                st.info("Scrivi un nome diverso da quello attuale.")
+            else:
+                rename_fn(new)
+        if n_ord:
+            st.caption(f"Non si può eliminare: ha {n_ord} ordini collegati.")
+        elif st.button("Elimina", key=f"del_{key}"):
+            delete_fn()
+
+
 if view == "Anagrafiche":
     if "flash_ana" in st.session_state:
         st.success(st.session_state.pop("flash_ana"))
-    # ---------- Consulta: clicca su una riga e vedi tutti gli ordini collegati ----------
-    st.markdown("### 🔎 Consulta")
-    st.caption("Clicca su una riga di Brand, Stagioni o Clienti per vedere tutti gli ordini collegati.")
+    st.markdown("### 🔎 Consulta e modifica")
+    st.caption("Clicca su una riga per vedere gli ordini collegati e per rinominarla o eliminarla. "
+               "Per aggiungere una voce nuova apri «➕ Aggiungi».")
     o_all = orders.copy()
     o_all["Pagamento"] = o_all["pay_status"].map(PAY_LBL)
     o_all["Spedizione"] = o_all["ship_status"].map(SHIP_LBL)
@@ -683,19 +725,87 @@ if view == "Anagrafiche":
 
     cons = st.radio("Consulta per", ["Brand", "Stagioni", "Clienti"], horizontal=True,
                     key="cons_tab", label_visibility="collapsed")
+    cv = st.session_state.get("consv", 0)
 
+    # ----- Brand -----
     if cons == "Brand":
+        with st.expander("➕ Aggiungi un brand"):
+            with st.form("add_brand", clear_on_submit=True):
+                nb = st.text_input("Nome del nuovo brand").strip()
+                if st.form_submit_button("Aggiungi"):
+                    esiste = {str(x).casefold() for x in list(brands) + list(orders["brand"])}
+                    if not nb:
+                        st.error("Scrivi un nome.")
+                    elif nb.casefold() in esiste:
+                        st.error("Questo brand esiste già.")
+                    else:
+                        lst = _read("Brand", tuple(ANA["Brand"]))["name"].tolist()
+                        write("Brand", pd.DataFrame({"name": lst + [nb]}), ANA["Brand"])
+                        st.session_state["flash_ana"] = f"Brand «{nb}» aggiunto."
+                        bump()
+                        st.rerun()
+
         bl = pd.DataFrame({"brand": sort_names(list(brands) + list(orders["brand"]))})
         bl["stagioni"] = bl["brand"].map(lambda b: int(orders.loc[orders["brand"] == b, "stagione"].nunique()))
         bl["ordini"] = bl["brand"].map(lambda b: int((orders["brand"] == b).sum()))
         sb = st.dataframe(bl, hide_index=True, use_container_width=True, on_select="rerun",
-                          selection_mode="single-row", key="cons_brand",
+                          selection_mode="single-row", key=f"cons_brand_{cv}",
                           column_config={"brand": "Brand", "stagioni": "Stagioni", "ordini": "Ordini"})
         if sb.selection.rows:
             b_sel = bl.iloc[sb.selection.rows[0]]["brand"]
+
+            def ren_brand(new, b=b_sel):
+                altri = {str(x).casefold() for x in list(brands) + list(orders["brand"])} - {b.casefold()}
+                if new.casefold() in altri:
+                    st.error("Esiste già un brand con questo nome.")
+                    return
+                ren_orders(lambda f: f["brand"] == b, "brand", new)
+                lst = [new if x == b else x for x in _read("Brand", tuple(ANA["Brand"]))["name"].tolist()]
+                if new not in lst:
+                    lst.append(new)
+                write("Brand", pd.DataFrame({"name": list(dict.fromkeys(lst))}), ANA["Brand"])
+                stg = _read("Stagioni", tuple(ANA["Stagioni"]))
+                if (stg["brand"] == b).any():
+                    stg.loc[stg["brand"] == b, "brand"] = new
+                    write("Stagioni", stg, ANA["Stagioni"])
+                if st.session_state.get("brand_sel") == b:
+                    st.session_state["_ren_sel"] = {"brand_sel": new}
+                st.session_state["flash_ana"] = f"Brand rinominato in «{new}»."
+                bump()
+                st.rerun()
+
+            def del_brand(b=b_sel):
+                lst = [x for x in _read("Brand", tuple(ANA["Brand"]))["name"].tolist() if x != b]
+                write("Brand", pd.DataFrame({"name": lst}), ANA["Brand"])
+                stg = _read("Stagioni", tuple(ANA["Stagioni"]))
+                write("Stagioni", stg[stg["brand"] != b], ANA["Stagioni"])
+                st.session_state["flash_ana"] = f"Brand «{b}» eliminato."
+                bump()
+                st.rerun()
+
+            azioni(b_sel, int((orders["brand"] == b_sel).sum()), f"brand_{b_sel}", ren_brand, del_brand)
             show_orders(o_all[o_all["brand"] == b_sel], b_sel)
 
+    # ----- Stagioni -----
     if cons == "Stagioni":
+        with st.expander("➕ Aggiungi una stagione"):
+            with st.form("add_season", clear_on_submit=True):
+                brand_opts = sort_names(list(brands) + list(orders["brand"]))
+                ab = st.selectbox("Brand", brand_opts)
+                ac = st.text_input("Codice stagione (es. SS27)").strip()
+                if st.form_submit_button("Aggiungi"):
+                    stg = _read("Stagioni", tuple(ANA["Stagioni"]))
+                    if not ac or not ab:
+                        st.error("Scegli il brand e scrivi il codice.")
+                    elif ((stg["brand"] == ab) & (stg["code"].astype(str).str.casefold() == ac.casefold())).any():
+                        st.error("Questa stagione esiste già per questo brand.")
+                    else:
+                        write("Stagioni", pd.concat([stg, pd.DataFrame([{"brand": ab, "code": ac}])],
+                                                    ignore_index=True), ANA["Stagioni"])
+                        st.session_state["flash_ana"] = f"Stagione «{ab} {ac}» aggiunta."
+                        bump()
+                        st.rerun()
+
         pairs = {(r.brand, r.code) for r in seasons.itertuples() if str(r.brand).strip() and str(r.code).strip()}
         pairs |= {(r.brand, r.stagione) for r in orders[["brand", "stagione"]].drop_duplicates().itertuples()
                   if str(r.brand).strip() and str(r.stagione).strip()}
@@ -704,52 +814,110 @@ if view == "Anagrafiche":
         sl["ordini"] = [int(((orders["brand"] == b) & (orders["stagione"] == c)).sum())
                         for b, c in zip(sl["brand"], sl["stagione"])]
         ss = st.dataframe(sl, hide_index=True, use_container_width=True, on_select="rerun",
-                          selection_mode="single-row", key="cons_season",
+                          selection_mode="single-row", key=f"cons_season_{cv}",
                           column_config={"brand": "Brand", "stagione": "Stagione", "ordini": "Ordini"})
         if ss.selection.rows:
             r_ = sl.iloc[ss.selection.rows[0]]
-            sub = o_all[(o_all["brand"] == r_["brand"]) & (o_all["stagione"] == r_["stagione"])]
-            show_orders(sub, f"{r_['brand']} {r_['stagione']}")
-            if st.button("Apri in Ordini", key="cons_open"):
-                st.session_state["_open"] = (r_["brand"], r_["stagione"])
+            b_s, s_s = r_["brand"], r_["stagione"]
+
+            def ren_season(new, b=b_s, s=s_s):
+                ren_orders(lambda f: (f["brand"] == b) & (f["stagione"] == s), "stagione", new)
+                stg = _read("Stagioni", tuple(ANA["Stagioni"]))
+                m = (stg["brand"] == b) & (stg["code"] == s)
+                if m.any():
+                    stg.loc[m, "code"] = new
+                else:
+                    stg = pd.concat([stg, pd.DataFrame([{"brand": b, "code": new}])], ignore_index=True)
+                write("Stagioni", stg.drop_duplicates(), ANA["Stagioni"])
+                if st.session_state.get("brand_sel") == b and st.session_state.get("season_sel") == s:
+                    st.session_state["_ren_sel"] = {"season_sel": new}
+                st.session_state["flash_ana"] = f"Stagione rinominata in «{b} {new}»."
+                bump()
                 st.rerun()
 
+            def del_season(b=b_s, s=s_s):
+                stg = _read("Stagioni", tuple(ANA["Stagioni"]))
+                write("Stagioni", stg[~((stg["brand"] == b) & (stg["code"] == s))], ANA["Stagioni"])
+                st.session_state["flash_ana"] = f"Stagione «{b} {s}» eliminata."
+                bump()
+                st.rerun()
+
+            n_s = int(((orders["brand"] == b_s) & (orders["stagione"] == s_s)).sum())
+            azioni(s_s, n_s, f"season_{b_s}_{s_s}", ren_season, del_season)
+            sub = o_all[(o_all["brand"] == b_s) & (o_all["stagione"] == s_s)]
+            show_orders(sub, f"{b_s} {s_s}")
+            if st.button("Apri in Ordini", key="cons_open"):
+                st.session_state["_open"] = (b_s, s_s)
+                st.rerun()
+
+    # ----- Clienti -----
     if cons == "Clienti":
+        with st.expander("➕ Aggiungi un cliente"):
+            with st.form("add_client", clear_on_submit=True):
+                nc = st.text_input("Nome del nuovo cliente").strip()
+                if st.form_submit_button("Aggiungi"):
+                    esiste = {" ".join(str(x).split()).casefold() for x in list(clients) + list(orders["cliente"])}
+                    if not nc:
+                        st.error("Scrivi un nome.")
+                    elif " ".join(nc.split()).casefold() in esiste:
+                        st.error("Questo cliente esiste già.")
+                    else:
+                        lst = _read("Clienti", tuple(ANA["Clienti"]))["name"].tolist()
+                        write("Clienti", pd.DataFrame({"name": sort_names(lst + [nc])}), ANA["Clienti"])
+                        st.session_state["flash_ana"] = f"Cliente «{nc}» aggiunto."
+                        bump()
+                        st.rerun()
+
         cl = pd.DataFrame({"cliente": sort_names(list(clients) + list(orders["cliente"]))})
         cl["ordini"] = cl["cliente"].map(lambda c: int((orders["cliente"] == c).sum()))
         cl["brand"] = cl["cliente"].map(lambda c: ", ".join(sorted(set(orders.loc[orders["cliente"] == c, "brand"]))))
         sc = st.dataframe(cl, hide_index=True, use_container_width=True, on_select="rerun",
-                          selection_mode="single-row", key="cons_client",
+                          selection_mode="single-row", key=f"cons_client_{cv}",
                           column_config={"cliente": "Cliente", "ordini": "Ordini", "brand": "Brand"})
         if sc.selection.rows:
             c_sel = cl.iloc[sc.selection.rows[0]]["cliente"]
+
+            def ren_client(new, c=c_sel):
+                altri = {" ".join(str(x).split()).casefold()
+                         for x in list(clients) + list(orders["cliente"])} - {" ".join(c.split()).casefold()}
+                if " ".join(new.split()).casefold() in altri:
+                    st.error("Esiste già un cliente con questo nome: per unirli usa «Clienti scritti in modo "
+                             "diverso» qui sotto.")
+                    return
+                ren_orders(lambda f: f["cliente"] == c, "cliente", new)
+                lst = [new if x == c else x for x in _read("Clienti", tuple(ANA["Clienti"]))["name"].tolist()]
+                if new not in lst:
+                    lst.append(new)
+                write("Clienti", pd.DataFrame({"name": sort_names(lst)}), ANA["Clienti"])
+                ana = _read("Anagrafica_Clienti", tuple(CLI_COLS))
+                if (ana["name"] == c).any():
+                    ana.loc[ana["name"] == c, "name"] = new
+                    write("Anagrafica_Clienti", ana, CLI_COLS)
+                con = _read("Contatti", tuple(CON_COLS))
+                if (con["cliente"] == c).any():
+                    con.loc[con["cliente"] == c, "cliente"] = new
+                    write("Contatti", con, CON_COLS)
+                st.session_state["flash_ana"] = f"Cliente rinominato in «{new}» (ordini, scheda e contatti aggiornati)."
+                bump()
+                st.rerun()
+
+            def del_client(c=c_sel):
+                lst = [x for x in _read("Clienti", tuple(ANA["Clienti"]))["name"].tolist() if x != c]
+                write("Clienti", pd.DataFrame({"name": sort_names(lst)}), ANA["Clienti"])
+                st.session_state["flash_ana"] = f"Cliente «{c}» eliminato."
+                bump()
+                st.rerun()
+
+            azioni(c_sel, int((orders["cliente"] == c_sel).sum()), f"client_{c_sel}", ren_client, del_client)
             scheda_cliente(c_sel, who)
             show_orders(o_all[o_all["cliente"] == c_sel], c_sel)
 
-    st.divider()
-    st.markdown("### ✏️ Modifica elenchi")
-    st.caption("Elenchi usati nei menu. Aggiungi righe in fondo e premi Salva.")
-
-    name = cons  # mostra solo l'elenco della sezione scelta
-    cols = ANA[name]
-    st.subheader(name)
-    data = read(name, tuple(cols))
-    if name == "Clienti":  # sempre in ordine alfabetico
-        data = pd.DataFrame({"name": sort_names(data["name"])})
-    out = st.data_editor(data, num_rows="dynamic", hide_index=True, key=f"ana-{name}")
-    if st.button(f"Salva {name.lower()}", key=f"s-{name}"):
-        out = out.dropna(how="all")
-        if name == "Clienti":
-            out = pd.DataFrame({"name": sort_names(out["name"].fillna(""))})
-        write(name, out, cols)
-        st.rerun()
-
-    if name == "Clienti":
+        st.divider()
         st.markdown("##### Clienti scritti in modo diverso")
         st.caption("Cerca lo stesso cliente scritto con maiuscole o spazi diversi (es. «FLEUR DE PARIS» e "
                    "«FLEUR de PARIS»). Scegli il nome da tenere: gli ordini verranno aggiornati e il doppione "
                    "sparisce dall'elenco.")
-        raw_names = ([str(n) for n in read("Clienti", tuple(cols))["name"] if str(n).strip()]
+        raw_names = ([str(n) for n in read("Clienti", tuple(ANA["Clienti"]))["name"] if str(n).strip()]
                      + [str(c) for c in orders["cliente"] if str(c).strip()])
         groups = {}
         for n_ in raw_names:
@@ -777,7 +945,8 @@ if view == "Anagrafiche":
                         fresh.loc[hit, ["updated_at", "updated_by"]] = [now, who]
                         save_orders(fresh[COLS])
                         log(rows_log)
-                    reg = [n_ for n_ in read("Clienti", tuple(cols))["name"] if str(n_) not in variants] + [keep]
+                    reg = [n_ for n_ in read("Clienti", tuple(ANA["Clienti"]))["name"]
+                           if str(n_) not in variants] + [keep]
                     write("Clienti", pd.DataFrame({"name": sort_names(reg)}), ANA["Clienti"])
                     st.session_state["flash_ana"] = f"Uniti in «{keep}»: aggiornati {n_upd} ordini."
                     st.rerun()
