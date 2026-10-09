@@ -16,6 +16,9 @@ st.set_page_config(page_title="Topsheet", layout="wide")
 WSP_URL = "https://wsppriceselectiontool.streamlit.app/"
 
 ANA = {"Brand": ["name"], "Stagioni": ["brand", "code"], "Clienti": ["name"]}
+# anagrafica clienti e persone di riferimento (schede separate: la scheda "Clienti" resta l'elenco dei nomi)
+CLI_COLS = ["name", "azienda", "attivo", "indirizzo", "citta", "paese", "partita_iva", "note"]
+CON_COLS = ["id", "cliente", "nome", "cognome", "ruolo", "email", "telefono", "attivo", "note"]
 LOGCOLS = ["quando", "chi", "id", "trade_name", "campo", "prima", "dopo"]
 EDIT = ["cliente", "trade_name", "city", "qty", "pct", "valuta", "sel", "oc", "prod", "payment_terms", "producer_code",
         "rc_del", "mje_del", "comments", "pay_status", "pay_paid", "pay_due", "ship_status", "ship_date"]
@@ -561,6 +564,100 @@ if view == "Importa":
                     st.success(f"Importati {len(df)} ordini nuovi, aggiornati {n_upd} già presenti"
                                f"{'' if upd else ' (i duplicati sono stati saltati)'}.")
 
+
+# ---------- Scheda cliente (anagrafica + persone di riferimento) ----------
+def scheda_cliente(c_sel, who):
+    """Scheda di un cliente: anagrafica + persone di riferimento (con log delle modifiche)."""
+    ana = read("Anagrafica_Clienti", tuple(CLI_COLS))
+    cur = ana[ana["name"] == c_sel]
+    a = cur.iloc[0].to_dict() if len(cur) else {c: "" for c in CLI_COLS}
+    st.markdown(f"#### {c_sel}")
+
+    with st.form(f"anag_form_{c_sel}"):
+        c1, c2, c3 = st.columns(3)
+        v = {}
+        v["azienda"] = c1.text_input("Azienda", a["azienda"], key=f"an_az_{c_sel}")
+        v["attivo"] = c2.selectbox("Attivo", ["SI", "NO"], index=1 if str(a["attivo"]).upper() == "NO" else 0,
+                                   key=f"an_at_{c_sel}")
+        v["partita_iva"] = c3.text_input("Partita IVA", a["partita_iva"], key=f"an_iva_{c_sel}")
+        v["indirizzo"] = st.text_input("Indirizzo", a["indirizzo"], key=f"an_ind_{c_sel}")
+        d1, d2 = st.columns(2)
+        v["citta"] = d1.text_input("Città", a["citta"], key=f"an_ci_{c_sel}")
+        v["paese"] = d2.text_input("Paese", a["paese"], key=f"an_pa_{c_sel}")
+        v["note"] = st.text_area("Note", a["note"], key=f"an_no_{c_sel}")
+        ok = st.form_submit_button("Salva scheda")
+    if ok:
+        if not who.strip():
+            st.error("Scrivi il tuo nome nella barra laterale prima di salvare.")
+        else:
+            now = datetime.now().strftime("%Y-%m-%d %H:%M")
+            fresh = _read("Anagrafica_Clienti", tuple(CLI_COLS))
+            o = fresh[fresh["name"] == c_sel]
+            old = o.iloc[0].to_dict() if len(o) else {c: "" for c in CLI_COLS}
+            rows = [[now, who, "anagrafica", c_sel, k, norm(old[k]), norm(val)]
+                    for k, val in v.items() if not same(old[k], val)]
+            if rows:
+                fresh = pd.concat([fresh[fresh["name"] != c_sel], pd.DataFrame([{"name": c_sel, **v}])],
+                                  ignore_index=True)
+                write("Anagrafica_Clienti", fresh.sort_values("name", key=lambda s: s.str.casefold()), CLI_COLS)
+                log(rows)
+                st.session_state["flash_ana"] = f"Scheda di {c_sel} salvata."
+                st.rerun()
+            else:
+                st.info("Nessuna modifica da salvare.")
+
+    st.markdown("**Persone di riferimento**")
+    con = read("Contatti", tuple(CON_COLS))
+    mine = con[con["cliente"] == c_sel].reset_index(drop=True)
+    mine["attivo"] = mine["attivo"].where(mine["attivo"].isin(["SI", "NO"]), "SI")
+    only_act = st.toggle("Solo attivi", key=f"con_act_{c_sel}")
+    shown = mine[mine["attivo"] == "SI"].reset_index(drop=True) if only_act else mine
+    ed = st.data_editor(
+        shown, num_rows="dynamic", hide_index=True, use_container_width=True,
+        column_order=["nome", "cognome", "ruolo", "email", "telefono", "attivo", "note"],
+        column_config={"nome": "Nome", "cognome": "Cognome", "ruolo": "Ruolo", "email": "Email",
+                       "telefono": "Telefono", "note": "Note",
+                       "attivo": st.column_config.SelectboxColumn("Attivo", options=["SI", "NO"], width="small")},
+        key=f"con_ed_{c_sel}_{only_act}_{st.session_state.get('conv', 0)}")
+    if st.button("Salva contatti", key=f"con_save_{c_sel}"):
+        if not who.strip():
+            st.error("Scrivi il tuo nome nella barra laterale prima di salvare.")
+        else:
+            now = datetime.now().strftime("%Y-%m-%d %H:%M")
+            e = ed.copy()
+            e["cliente"] = c_sel
+            e["attivo"] = e["attivo"].where(e["attivo"].isin(["SI", "NO"]), "SI")
+            e["id"] = e["id"].apply(lambda x: x if isinstance(x, str) and x else uuid.uuid4().hex[:8])
+            e = e.fillna("")
+            vuoto = (e[["nome", "cognome", "email"]].astype(str).apply(lambda c: c.str.strip()) == "").all(axis=1)
+            e = e[~vuoto][CON_COLS]
+            fresh = _read("Contatti", tuple(CON_COLS))
+            old = fresh[fresh["cliente"] == c_sel].set_index("id")
+            new = e.set_index("id")
+            if only_act:  # i contatti non attivi nascosti dal filtro restano com'erano
+                hidden = old[~old.index.isin(shown["id"])]
+                new = pd.concat([new, hidden])
+            lab = lambda df_, i: f"{df_.loc[i, 'nome']} {df_.loc[i, 'cognome']}".strip()
+            rows = []
+            for i in new.index:
+                if i not in old.index:
+                    rows.append([now, who, i, c_sel, "(nuovo contatto) " + lab(new, i), "", ""])
+                else:
+                    rows += [[now, who, i, c_sel, f"contatto {lab(new, i)}: {c}", norm(old.loc[i, c]), norm(new.loc[i, c])]
+                             for c in CON_COLS[2:] if not same(old.loc[i, c], new.loc[i, c])]
+            rows += [[now, who, i, c_sel, "(contatto eliminato) " + lab(old, i), "", ""]
+                     for i in old.index.difference(new.index)]
+            if rows:
+                out = pd.concat([fresh[fresh["cliente"] != c_sel], new.reset_index()[CON_COLS]], ignore_index=True)
+                write("Contatti", out, CON_COLS)
+                log(rows)
+                st.session_state["conv"] = st.session_state.get("conv", 0) + 1
+                st.session_state["flash_ana"] = f"Contatti di {c_sel} salvati: {len(rows)} modifiche registrate."
+                st.rerun()
+            else:
+                st.info("Nessuna modifica da salvare.")
+
+
 # ---------- Anagrafiche ----------
 if view == "Anagrafiche":
     if "flash_ana" in st.session_state:
@@ -625,6 +722,7 @@ if view == "Anagrafiche":
                           column_config={"cliente": "Cliente", "ordini": "Ordini", "brand": "Brand"})
         if sc.selection.rows:
             c_sel = cl.iloc[sc.selection.rows[0]]["cliente"]
+            scheda_cliente(c_sel, who)
             show_orders(o_all[o_all["cliente"] == c_sel], c_sel)
 
     st.divider()
