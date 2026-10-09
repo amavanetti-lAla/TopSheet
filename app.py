@@ -729,7 +729,9 @@ if view == "Anagrafiche":
     st.divider()
     st.markdown("### ✏️ Modifica elenchi")
     st.caption("Elenchi usati nei menu. Aggiungi righe in fondo e premi Salva.")
-    for name, cols in ANA.items():
+        for name, cols in ANA.items():
+        if name != cons:  # mostra solo la sezione scelta nel selettore
+            continue
         st.subheader(name)
         data = read(name, tuple(cols))
         if name == "Clienti":  # sempre in ordine alfabetico
