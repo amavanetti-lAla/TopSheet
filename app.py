@@ -681,9 +681,10 @@ if view == "Anagrafiche":
         st.dataframe(sub.sort_values(["brand", "stagione", "cliente", "trade_name"])[ORD_COLS],
                      hide_index=True, use_container_width=True, column_config=ORD_CFG)
 
-    t_b, t_s, t_c = st.tabs(["Brand", "Stagioni", "Clienti"])
+    cons = st.radio("Consulta per", ["Brand", "Stagioni", "Clienti"], horizontal=True,
+                key="cons_tab", label_visibility="collapsed")
 
-    with t_b:
+    if cons == "Brand":
         bl = pd.DataFrame({"brand": sort_names(list(brands) + list(orders["brand"]))})
         bl["stagioni"] = bl["brand"].map(lambda b: int(orders.loc[orders["brand"] == b, "stagione"].nunique()))
         bl["ordini"] = bl["brand"].map(lambda b: int((orders["brand"] == b).sum()))
@@ -694,7 +695,7 @@ if view == "Anagrafiche":
             b_sel = bl.iloc[sb.selection.rows[0]]["brand"]
             show_orders(o_all[o_all["brand"] == b_sel], b_sel)
 
-    with t_s:
+    if cons == "Stagioni":
         pairs = {(r.brand, r.code) for r in seasons.itertuples() if str(r.brand).strip() and str(r.code).strip()}
         pairs |= {(r.brand, r.stagione) for r in orders[["brand", "stagione"]].drop_duplicates().itertuples()
                   if str(r.brand).strip() and str(r.stagione).strip()}
@@ -713,7 +714,7 @@ if view == "Anagrafiche":
                 st.session_state["_open"] = (r_["brand"], r_["stagione"])
                 st.rerun()
 
-    with t_c:
+    if cons == "Clienti":
         cl = pd.DataFrame({"cliente": sort_names(list(clients) + list(orders["cliente"]))})
         cl["ordini"] = cl["cliente"].map(lambda c: int((orders["cliente"] == c).sum()))
         cl["brand"] = cl["cliente"].map(lambda c: ", ".join(sorted(set(orders.loc[orders["cliente"] == c, "brand"]))))
