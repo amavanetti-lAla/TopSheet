@@ -246,16 +246,42 @@ with st.sidebar:
         st.rerun()
 
 # Barra superiore: selettore di vista a sinistra, link per tornare a WSP a destra
+st.markdown(
+    """
+    <style>
+    .st-key-btn_wsp a, .st-key-btn_libretto a {
+        border-radius: 8px;
+        transition: background-color .15s;
+    }
+    .st-key-btn_wsp a {
+        background-color: #DDE8D8;
+        border: 1px solid #C3D5BC;
+    }
+    .st-key-btn_wsp a:hover { background-color: #CFDFC8; border-color: #B3C9AB; }
+    .st-key-btn_wsp a, .st-key-btn_wsp a * { color: #3E5239 !important; }
+
+    .st-key-btn_libretto a {
+        background-color: #DCEAF4;
+        border: 1px solid #BDD3E5;
+    }
+    .st-key-btn_libretto a:hover { background-color: #CBDFEE; border-color: #A9C6DD; }
+    .st-key-btn_libretto a, .st-key-btn_libretto a * { color: #35506A !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 view_col, link_col = st.columns([4, 1])
 with view_col:
     view = st.radio("Vista", VIEWS, horizontal=True, key="view", label_visibility="collapsed")
 with link_col:
-    st.link_button("Apri WSP ↗", WSP_URL, use_container_width=True)
-    st.link_button(
-        "libretto Zedonk ↔ JOOR ↗",
-        "https://amavanetti-lala.github.io/libretto-zedonk-joor/",
-        use_container_width=True,
-    )
+    with st.container(key="btn_wsp"):
+        st.link_button("Apri WSP ↗", WSP_URL, use_container_width=True)
+    with st.container(key="btn_libretto"):
+        st.link_button(
+            "libretto Zedonk ↔ JOOR ↗",
+            "https://amavanetti-lala.github.io/libretto-zedonk-joor/",
+            use_container_width=True,
+        )
 
 # ---------- Panoramica ----------
 if view == "Panoramica":
