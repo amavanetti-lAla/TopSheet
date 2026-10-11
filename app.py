@@ -252,7 +252,7 @@ with view_col:
 with link_col:
     st.link_button("Apri WSP ↗", WSP_URL, use_container_width=True)
     st.link_button(
-        "Apri libretto Zedonk ↔ JOOR ↗",
+        "libretto Zedonk ↔ JOOR ↗",
         "https://amavanetti-lala.github.io/libretto-zedonk-joor/",
         use_container_width=True,
     )
