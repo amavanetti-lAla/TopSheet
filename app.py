@@ -251,11 +251,11 @@ with view_col:
     view = st.radio("Vista", VIEWS, horizontal=True, key="view", label_visibility="collapsed")
 with link_col:
     st.link_button("Apri WSP ↗", WSP_URL, use_container_width=True)
-        st.link_button(
-    "Apri libretto Zedonk ↔ JOOR ↗",
-    "https://amavanetti-lala.github.io/libretto-zedonk-joor/",
-    use_container_width=True,
-)
+    st.link_button(
+        "Apri libretto Zedonk ↔ JOOR ↗",
+        "https://amavanetti-lala.github.io/libretto-zedonk-joor/",
+        use_container_width=True,
+    )
 
 # ---------- Panoramica ----------
 if view == "Panoramica":
