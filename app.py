@@ -583,19 +583,21 @@ def scheda_cliente(c_sel, who):
     a = cur.iloc[0].to_dict() if len(cur) else {c: "" for c in CLI_COLS}
     st.markdown(f"#### {c_sel}")
 
-    with st.form(f"anag_form_{c_sel}"):
-        c1, c2, c3 = st.columns(3)
-        v = {}
-        v["azienda"] = c1.text_input("Azienda", a["azienda"], key=f"an_az_{c_sel}")
-        v["attivo"] = c2.selectbox("Attivo", ["SI", "NO"], index=1 if str(a["attivo"]).upper() == "NO" else 0,
-                                   key=f"an_at_{c_sel}")
-        v["partita_iva"] = c3.text_input("Partita IVA", a["partita_iva"], key=f"an_iva_{c_sel}")
-        v["indirizzo"] = st.text_input("Indirizzo", a["indirizzo"], key=f"an_ind_{c_sel}")
-        d1, d2 = st.columns(2)
-        v["citta"] = d1.text_input("Città", a["citta"], key=f"an_ci_{c_sel}")
-        v["paese"] = d2.text_input("Paese", a["paese"], key=f"an_pa_{c_sel}")
-        v["note"] = st.text_area("Note", a["note"], key=f"an_no_{c_sel}")
-        ok = st.form_submit_button("Salva scheda")
+    # Dati anagrafici: compatti e dentro un riquadro chiuso (si apre solo quando serve)
+    with st.expander("📇 Dati anagrafici (azienda, indirizzo, P.IVA, note)"):
+        with st.form(f"anag_form_{c_sel}"):
+            v = {}
+            c1, c2, c3 = st.columns([3, 1, 2])
+            v["azienda"] = c1.text_input("Azienda", a["azienda"], key=f"an_az_{c_sel}")
+            v["attivo"] = c2.selectbox("Attivo", ["SI", "NO"], index=1 if str(a["attivo"]).upper() == "NO" else 0,
+                                       key=f"an_at_{c_sel}")
+            v["partita_iva"] = c3.text_input("Partita IVA", a["partita_iva"], key=f"an_iva_{c_sel}")
+            d1, d2, d3 = st.columns([3, 2, 1])
+            v["indirizzo"] = d1.text_input("Indirizzo", a["indirizzo"], key=f"an_ind_{c_sel}")
+            v["citta"] = d2.text_input("Città", a["citta"], key=f"an_ci_{c_sel}")
+            v["paese"] = d3.text_input("Paese", a["paese"], key=f"an_pa_{c_sel}")
+            v["note"] = st.text_area("Note", a["note"], height=68, key=f"an_no_{c_sel}")
+            ok = st.form_submit_button("Salva scheda")
     if ok:
         if not who.strip():
             st.error("Scrivi il tuo nome nella barra laterale prima di salvare.")
@@ -914,8 +916,8 @@ if view == "Anagrafiche":
                 st.rerun()
 
             azioni(c_sel, int((orders["cliente"] == c_sel).sum()), f"client_{c_sel}", ren_client, del_client)
-            scheda_cliente(c_sel, who)
             show_orders(o_all[o_all["cliente"] == c_sel], c_sel)
+            scheda_cliente(c_sel, who)
 
         st.divider()
         st.markdown("##### Clienti scritti in modo diverso")
