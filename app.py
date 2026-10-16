@@ -246,10 +246,12 @@ with st.sidebar:
         st.rerun()
 
 # Barra superiore: selettore di vista a sinistra, link per tornare a WSP a destra
+TODO_URL = "https://todo-clienti-6lgpv4zcsyqdhjjb8pcqxu.streamlit.app/"
+
 st.markdown(
     """
     <style>
-    .st-key-btn_wsp a, .st-key-btn_libretto a {
+    .st-key-btn_wsp a, .st-key-btn_libretto a, .st-key-btn_todo a {
         border-radius: 8px;
         transition: background-color .15s;
     }
@@ -266,6 +268,13 @@ st.markdown(
     }
     .st-key-btn_libretto a:hover { background-color: #CBDFEE; border-color: #A9C6DD; }
     .st-key-btn_libretto a, .st-key-btn_libretto a * { color: #35506A !important; }
+
+    .st-key-btn_todo a {
+        background-color: #E6DFF0;
+        border: 1px solid #D0C5E3;
+    }
+    .st-key-btn_todo a:hover { background-color: #DBD1EA; border-color: #C0B2D9; }
+    .st-key-btn_todo a, .st-key-btn_todo a * { color: #4F4066 !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -282,6 +291,8 @@ with link_col:
             "https://amavanetti-lala.github.io/libretto-zedonk-joor/",
             use_container_width=True,
         )
+    with st.container(key="btn_todo"):
+        st.link_button("Todo clienti ↗", TODO_URL, use_container_width=True)
 
 # ---------- Panoramica ----------
 if view == "Panoramica":
