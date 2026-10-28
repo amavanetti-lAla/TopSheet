@@ -7,7 +7,11 @@ RC DEL, MJE DEL, COMMENTS, ORDER N., ...) ovunque si trovino, quindi
 funziona anche se i file hanno colonne diverse, righe di titolo in più,
 righe di sezione ("EUR ACCOUNTS", "TOTAL USD") e totali.
 
-parse_xlsx(file) -> (brand, stagione, DataFrame)
+parse_xlsx(file, include_empty=False) -> (brand, stagione, DataFrame)
+
+Di default le righe senza quantità né importo (clienti previsti, "NO ORDER", "TBC"...)
+vengono saltate; con include_empty=True entrano anche loro.
+I nomi delle righe saltate sono in df.attrs["skipped"].
 """
 import re
 
@@ -80,7 +84,7 @@ def _title(ws):
     return "", ""
 
 
-def parse_xlsx(file):
+def parse_xlsx(file, include_empty=False):
     wb = openpyxl.load_workbook(file, data_only=True)
     ws = wb.worksheets[0]
     brand, season = _title(ws)
@@ -150,7 +154,7 @@ def parse_xlsx(file):
     def cell(r, c):
         return ws.cell(r, c).value if c else None
 
-    rows = []
+    rows, skipped = [], []
     ctx = "€"
     for r in range(head_row + 1, ws.max_row + 1):
         trade = _txt(cell(r, trade_col))
@@ -165,7 +169,8 @@ def parse_xlsx(file):
         if r < first or not trade or is_total(trade):
             continue
         qty, val = _num(cell(r, qty_col)), _num(cell(r, val_col))
-        if qty is None and val is None:
+        if qty is None and val is None and not include_empty:
+            skipped.append(f"{trade} ({_txt(cell(r, city_col))})" if _txt(cell(r, city_col)) else trade)
             continue
         shop = _txt(cell(r, shop_col)) or trade
         terms = _txt(cell(r, pay_col))
@@ -189,5 +194,8 @@ def parse_xlsx(file):
             "ship_status": "da_spedire",
         })
     if not rows:
-        raise ValueError("Nessun ordine valido trovato nel file.")
-    return brand, season, pd.DataFrame(rows, columns=OUT_COLS)
+        raise ValueError("Nessun ordine con quantità o importo trovato nel file. "
+                         "Spunta «Includi anche le righe senza quantità né importo» per importare comunque le righe.")
+    df = pd.DataFrame(rows, columns=OUT_COLS)
+    df.attrs["skipped"] = skipped
+    return brand, season, df
