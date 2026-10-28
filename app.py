@@ -550,7 +550,7 @@ if view == "Importa":
     up = st.file_uploader("Carica un topsheet (.xlsx)", type=["xlsx"])
     if up:
         try:
-                        inc = st.checkbox("Includi anche le righe senza quantità né importo (clienti previsti, «NO ORDER», «TBC»)", key="imp_empty")
+            inc = st.checkbox("Includi anche le righe senza quantità né importo (clienti previsti, «NO ORDER», «TBC»)", key="imp_empty")
             b, s, df = parse_xlsx(up, include_empty=inc)
             if df.attrs.get("skipped") and not inc:
                 st.caption(f"{len(df.attrs['skipped'])} righe senza quantità né importo non incluse: " + ", ".join(df.attrs["skipped"][:12]))
